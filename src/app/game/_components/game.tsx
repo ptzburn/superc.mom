@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { EditPlan } from "~/lib/ai-editor/types";
+import type { FeatureSnapshot, ViralMoment } from "~/lib/ai-editor/viral";
 import { createMusicEngine, type MusicEngine } from "./music";
 import { createSfxEngine, type SfxEngine } from "./sfx";
 
@@ -127,6 +128,13 @@ type GameRuntime = {
 	matchStartMs: number;
 	lastPlayerKillMs: number;
 	lowHpFlaggedAt: number;        // -1 when not flagged
+	// Telemetry stream: one snapshot every ~250ms during play, fed to the
+	// post-match viral classifier alongside `events`.
+	snapshots: FeatureSnapshot[];
+	lastSnapshotMs: number;
+	bucketKills: number;
+	bucketHits: number;
+	bucketShots: number;
 };
 
 export type GameEvent =
@@ -405,6 +413,11 @@ function createInitialState(): GameRuntime {
 		matchStartMs: performance.now(),
 		lastPlayerKillMs: -Infinity,
 		lowHpFlaggedAt: -1,
+		snapshots: [],
+		lastSnapshotMs: 0,
+		bucketKills: 0,
+		bucketHits: 0,
+		bucketShots: 0,
 	};
 }
 
@@ -559,6 +572,44 @@ function update(s: GameRuntime, dt: number) {
 		s.lowHpFlaggedAt = -1;
 	}
 
+	// Sample a telemetry snapshot every ~250ms.
+	const tNow = nowT(s);
+	if (tNow - s.lastSnapshotMs >= 250) {
+		let runners = 0;
+		let brutes = 0;
+		let nearestD = 1e9;
+		for (const z of s.zombies) {
+			if (z.type === "runner") runners += 1;
+			else if (z.type === "brute") brutes += 1;
+			const dd = Math.hypot(
+				z.pos.x - s.player.pos.x,
+				z.pos.y - s.player.pos.y,
+			);
+			if (dd < nearestD) nearestD = dd;
+		}
+		const allyAlive = s.allies.reduce((n, a) => n + (a.alive ? 1 : 0), 0);
+		const dist01 = nearestD < 1e8 ? Math.max(0, 1 - nearestD / 600) : 0;
+		const density01 = Math.min(1, s.zombies.length / 8);
+		const threatProxim = Math.min(1, dist01 * 0.7 + density01 * 0.5);
+		s.snapshots.push({
+			t: tNow,
+			playerHpFrac: hpFrac,
+			alliesAlive: allyAlive,
+			zombiesOnScreen: s.zombies.length,
+			zombieRunners: runners,
+			zombieBrutes: brutes,
+			threatProxim,
+			killsBucket: s.bucketKills,
+			hitsTakenBucket: Math.round(s.bucketHits),
+			shotsFiredBucket: s.bucketShots,
+			wave: s.wave,
+		});
+		s.lastSnapshotMs = tNow;
+		s.bucketKills = 0;
+		s.bucketHits = 0;
+		s.bucketShots = 0;
+	}
+
 	if (s.player.hp <= 0) {
 		s.phase = "gameover";
 		s.bannerText = "OVERRUN";
@@ -608,6 +659,7 @@ function updatePlayer(s: GameRuntime, dt: number) {
 		spawnMuzzleFlash(s, p.pos, p.angle);
 		s.sfx?.play("playerShoot");
 		p.cooldown = PLAYER_FIRE_RATE;
+		s.bucketShots += 1;
 	}
 }
 
@@ -713,6 +765,7 @@ function updateZombies(s: GameRuntime, dt: number) {
 				s.player.hitFlash = 0.15;
 				triggerShake(s, 0.18, 6);
 				s.sfx?.play("playerHurt");
+				s.bucketHits += dmg;
 			} else {
 				best.ally.hp = Math.max(0, best.ally.hp - dmg);
 				best.ally.hitFlash = 0.15;
@@ -806,6 +859,7 @@ function updateBullets(s: GameRuntime, dt: number) {
 				if (z.hp <= 0) {
 					s.zombies.splice(j, 1);
 					s.kills += 1;
+					if (b.team === "player") s.bucketKills += 1;
 					spawnBlood(s, z.pos, 16);
 					s.sfx?.play("zombieKill");
 					const range = Math.hypot(
@@ -1363,12 +1417,20 @@ export default function Game() {
 	const [muted, setMuted] = useState(false);
 	const recorderRef = useRef<MediaRecorder | null>(null);
 	const chunksRef = useRef<Blob[]>([]);
-	const [editState, setEditState] = useState<{
-		blobUrl: string | null;
-		plan: EditPlan | null;
-		loading: boolean;
+	const eventsRef = useRef<GameEvent[]>([]);
+	const [matchSummary, setMatchSummary] = useState<{
 		eventCount: number;
-	}>({ blobUrl: null, plan: null, loading: false, eventCount: 0 });
+		snapshotCount: number;
+		blobUrl: string | null;
+	}>({ eventCount: 0, snapshotCount: 0, blobUrl: null });
+	const [viralState, setViralState] = useState<{
+		status: "idle" | "detecting" | "done";
+		moments: ViralMoment[];
+	}>({ status: "idle", moments: [] });
+	const [editState, setEditState] = useState<{
+		status: "idle" | "loading" | "done" | "error";
+		plan: EditPlan | null;
+	}>({ status: "idle", plan: null });
 	const [hud, setHud] = useState({
 		hp: PLAYER_MAX_HP,
 		maxHp: PLAYER_MAX_HP,
@@ -1404,41 +1466,43 @@ export default function Game() {
 		else m.stop();
 	}, [hud.phase, hud.paused]);
 
-	// On gameover: stop recorder, ship events to /api/edit-plan, render result.
+	// On gameover: stop recorder, run the viral-moment classifier on the
+	// captured events + telemetry. Edit CTA only shows up if anything
+	// scored above the viral threshold.
 	useEffect(() => {
 		if (hud.phase !== "gameover") return;
 		const events = [...stateRef.current.events];
-		setEditState({
-			blobUrl: null,
-			plan: null,
-			loading: true,
+		const snapshots = [...stateRef.current.snapshots];
+		eventsRef.current = events;
+		setMatchSummary({
 			eventCount: events.length,
+			snapshotCount: snapshots.length,
+			blobUrl: null,
 		});
+		setViralState({ status: "detecting", moments: [] });
 
 		const finishUp = async (blob: Blob | null) => {
 			const blobUrl = blob ? URL.createObjectURL(blob) : null;
+			setMatchSummary({
+				eventCount: events.length,
+				snapshotCount: snapshots.length,
+				blobUrl,
+			});
 			try {
-				const res = await fetch("/api/edit-plan", {
+				const res = await fetch("/api/viral-detect", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ events }),
+					body: JSON.stringify({ events, snapshots }),
 				});
-				if (!res.ok) throw new Error(`edit-plan ${res.status}`);
-				const plan: EditPlan = await res.json();
-				setEditState({
-					blobUrl,
-					plan,
-					loading: false,
-					eventCount: events.length,
+				if (!res.ok) throw new Error(`viral-detect ${res.status}`);
+				const json = (await res.json()) as { moments: ViralMoment[] };
+				setViralState({
+					status: "done",
+					moments: json.moments ?? [],
 				});
 			} catch (err) {
-				console.error("[game] edit-plan failed", err);
-				setEditState({
-					blobUrl,
-					plan: null,
-					loading: false,
-					eventCount: events.length,
-				});
+				console.error("[game] viral-detect failed", err);
+				setViralState({ status: "done", moments: [] });
 			}
 		};
 
@@ -1616,8 +1680,27 @@ export default function Game() {
 		stateRef.current = s;
 		musicRef.current?.start();
 		sfxRef.current?.ensureStarted();
-		setEditState({ blobUrl: null, plan: null, loading: false, eventCount: 0 });
+		setMatchSummary({ eventCount: 0, snapshotCount: 0, blobUrl: null });
+		setViralState({ status: "idle", moments: [] });
+		setEditState({ status: "idle", plan: null });
 		startMatchRecording();
+	};
+
+	const requestEdit = async () => {
+		setEditState({ status: "loading", plan: null });
+		try {
+			const res = await fetch("/api/edit-plan", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ events: eventsRef.current }),
+			});
+			if (!res.ok) throw new Error(`edit-plan ${res.status}`);
+			const plan: EditPlan = await res.json();
+			setEditState({ status: "done", plan });
+		} catch (err) {
+			console.error("[game] edit-plan failed", err);
+			setEditState({ status: "error", plan: null });
+		}
 	};
 
 	const resume = () => {
@@ -1729,73 +1812,21 @@ export default function Game() {
 								{hud.wave === 1 ? "" : "s"} · dropped{" "}
 								<span className="font-bold text-white">{hud.kills}</span> ·{" "}
 								<span className="font-bold text-white">
-									{editState.eventCount}
+									{matchSummary.eventCount}
 								</span>{" "}
-								events captured
+								events,{" "}
+								<span className="font-bold text-white">
+									{matchSummary.snapshotCount}
+								</span>{" "}
+								telemetry samples
 							</p>
 
-							<div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2">
-								{/* Recorded match preview */}
-								<div className="overflow-hidden rounded-lg border border-neutral-700 bg-black">
-									{editState.blobUrl ? (
-										<video
-											autoPlay
-											className="block aspect-video w-full"
-											loop
-											muted
-											playsInline
-											src={editState.blobUrl}
-										/>
-									) : (
-										<div className="flex aspect-video w-full items-center justify-center text-neutral-500 text-xs">
-											no recording captured
-										</div>
-									)}
-									{editState.blobUrl && (
-										<a
-											className="block bg-neutral-800 px-3 py-2 text-center font-mono text-[11px] text-neutral-200 uppercase tracking-wider transition hover:bg-neutral-700"
-											download="brrawl-match.webm"
-											href={editState.blobUrl}
-										>
-											download match webm
-										</a>
-									)}
-								</div>
-
-								{/* AI editor decisions */}
-								<div className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
-									<div className="flex items-center justify-between border-neutral-800 border-b bg-neutral-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[.18em]">
-										<span className="text-emerald-300">ai editor</span>
-										<span className="text-neutral-500">
-											{editState.loading
-												? "thinking…"
-												: editState.plan
-													? "ready"
-													: "no plan"}
-										</span>
-									</div>
-									{editState.loading && (
-										<div className="flex h-full min-h-[180px] items-center justify-center px-4 py-6 text-neutral-500 text-xs">
-											<div className="space-y-2 text-center">
-												<div className="font-mono text-emerald-300/80">
-													→ scoring {editState.eventCount} events
-												</div>
-												<div className="font-mono text-neutral-500">
-													→ asking the model for an edit plan…
-												</div>
-											</div>
-										</div>
-									)}
-									{!editState.loading && editState.plan && (
-										<EditPlanCard plan={editState.plan} />
-									)}
-									{!editState.loading && !editState.plan && (
-										<div className="px-4 py-6 font-mono text-[11px] text-neutral-500">
-											plan unavailable. /api/edit-plan failed — see console.
-										</div>
-									)}
-								</div>
-							</div>
+							<ViralVerdict
+								editState={editState}
+								matchSummary={matchSummary}
+								onRequestEdit={requestEdit}
+								viralState={viralState}
+							/>
 
 							<button
 								className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
@@ -1833,6 +1864,145 @@ function Overlay({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="absolute inset-0 flex flex-col items-center justify-center overflow-y-auto rounded-lg bg-black/75 px-4 py-6 backdrop-blur-sm">
 			{children}
+		</div>
+	);
+}
+
+function ViralVerdict({
+	viralState,
+	matchSummary,
+	editState,
+	onRequestEdit,
+}: {
+	viralState: { status: "idle" | "detecting" | "done"; moments: ViralMoment[] };
+	matchSummary: { eventCount: number; snapshotCount: number; blobUrl: string | null };
+	editState: { status: "idle" | "loading" | "done" | "error"; plan: EditPlan | null };
+	onRequestEdit: () => void;
+}) {
+	if (viralState.status === "detecting") {
+		return (
+			<div className="flex w-full items-center gap-3 rounded-lg border border-neutral-700 bg-neutral-950 px-4 py-4">
+				<div className="h-2.5 w-2.5 animate-pulse rounded-full bg-amber-300" />
+				<div className="flex-1 font-mono text-[11px]">
+					<div className="text-amber-300 uppercase tracking-[.18em]">
+						ml viral classifier
+					</div>
+					<div className="mt-1 text-neutral-400">
+						scoring {matchSummary.eventCount} events against{" "}
+						{matchSummary.snapshotCount} telemetry samples…
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	if (viralState.moments.length === 0) {
+		return (
+			<div className="flex w-full items-center gap-3 rounded-lg border border-neutral-800 bg-neutral-950 px-4 py-4">
+				<div className="h-2.5 w-2.5 rounded-full bg-neutral-500" />
+				<div className="flex-1 font-mono text-[11px]">
+					<div className="text-neutral-300 uppercase tracking-[.18em]">
+						no viral moments detected
+					</div>
+					<div className="mt-1 text-neutral-500">
+						Nothing in this match scored above the viral threshold. Try again
+						— go for a clutch.
+					</div>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2">
+			{/* Detected viral moments */}
+			<div className="overflow-hidden rounded-lg border border-emerald-700/60 bg-neutral-950">
+				<div className="flex items-center justify-between border-emerald-800/50 border-b bg-emerald-950/40 px-3 py-2 font-mono text-[10px] uppercase tracking-[.18em]">
+					<span className="text-emerald-300">
+						{viralState.moments.length} viral moment
+						{viralState.moments.length === 1 ? "" : "s"}
+					</span>
+					<span className="text-neutral-400">classifier · llama-3.3-70b</span>
+				</div>
+				<div className="space-y-2 px-3 py-3">
+					{viralState.moments.map((m) => (
+						<div
+							className="rounded bg-neutral-900 px-3 py-2 font-mono text-[11px]"
+							key={m.eventIndex}
+						>
+							<div className="flex items-center justify-between gap-2">
+								<span className="font-bold text-amber-300">{m.label}</span>
+								<span className="text-emerald-300">{m.score}/100</span>
+							</div>
+							<div className="mt-1 text-neutral-400">{m.reason}</div>
+						</div>
+					))}
+					{matchSummary.blobUrl && (
+						<a
+							className="mt-1 block rounded bg-neutral-900 px-3 py-2 text-center text-[10px] text-neutral-300 uppercase tracking-wider transition hover:bg-neutral-800"
+							download="brrawl-match.webm"
+							href={matchSummary.blobUrl}
+						>
+							download raw match webm
+						</a>
+					)}
+					{editState.status === "idle" && (
+						<button
+							className="w-full rounded bg-amber-300 px-3 py-2 font-bold text-[12px] text-neutral-900 uppercase tracking-wider transition hover:bg-amber-200"
+							onClick={onRequestEdit}
+							type="button"
+						>
+							build the edit
+						</button>
+					)}
+					{editState.status === "loading" && (
+						<div className="rounded bg-neutral-900 px-3 py-2 text-center text-[10px] text-neutral-400 uppercase tracking-wider">
+							building edit plan…
+						</div>
+					)}
+					{editState.status === "error" && (
+						<div className="rounded bg-red-950/30 px-3 py-2 text-center text-[10px] text-red-300 uppercase tracking-wider">
+							edit failed — see console
+						</div>
+					)}
+				</div>
+			</div>
+
+			{/* Recorded match preview / edit plan */}
+			<div className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
+				{editState.status === "done" && editState.plan ? (
+					<>
+						<div className="flex items-center justify-between border-neutral-800 border-b bg-neutral-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[.18em]">
+							<span className="text-emerald-300">edit plan</span>
+							<span className="text-neutral-500">ready</span>
+						</div>
+						<EditPlanCard plan={editState.plan} />
+					</>
+				) : (
+					<>
+						<div className="flex items-center justify-between border-neutral-800 border-b bg-neutral-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[.18em]">
+							<span className="text-neutral-300">match recording</span>
+							<span className="text-neutral-500">
+								{matchSummary.blobUrl ? "captured" : "not captured"}
+							</span>
+						</div>
+						{matchSummary.blobUrl ? (
+							<video
+								autoPlay
+								className="block aspect-video w-full"
+								loop
+								muted
+								playsInline
+								src={matchSummary.blobUrl}
+							/>
+						) : (
+							<div className="flex aspect-video w-full items-center justify-center text-neutral-500 text-xs">
+								no recording captured
+							</div>
+						)}
+					</>
+				)}
+			</div>
 		</div>
 	);
 }
