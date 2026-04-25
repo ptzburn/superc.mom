@@ -204,8 +204,8 @@ export default function GameZPage() {
 					</div>
 				</div>
 
-				{/* RIGHT: phone + side panel */}
-				<div className="grid grid-cols-1 gap-6 lg:col-span-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
+				{/* RIGHT: phone */}
+				<div className="flex justify-center lg:col-span-6">
 					<div className="relative">
 						{/* status chip above phone */}
 						<div className="absolute -top-3 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/10 bg-black/70 px-3 py-1.5 backdrop-blur">
@@ -313,17 +313,20 @@ export default function GameZPage() {
 						)}
 					</div>
 
-					{/* side panel: terminal stream */}
-					<div className="lg:pt-2">
-						<PlanStream loading={state === "editing"} plan={plan} />
-						<div className="mt-3 flex items-center gap-2 px-1 font-mono text-[10px] text-white/40 uppercase tracking-wider">
-							<div className="h-[5px] w-[5px] rounded-full bg-violet-300" />
-							<span>{events.length} events captured</span>
-							<span className="ml-auto">/api/edit-plan</span>
-						</div>
-					</div>
 				</div>
 			</section>
+
+			{/* AI editor stream — only when actively editing */}
+			{state === "editing" && (
+				<section className="relative z-10 mx-auto max-w-[860px] px-6 pb-12 md:px-10">
+					<PlanStream loading={true} plan={plan} />
+					<div className="mt-3 flex items-center gap-2 px-1 font-mono text-[10px] text-white/40 uppercase tracking-wider">
+						<div className="h-[5px] w-[5px] animate-pulse rounded-full bg-violet-300" />
+						<span>{events.length} events captured</span>
+						<span className="ml-auto">/api/edit-plan</span>
+					</div>
+				</section>
+			)}
 
 			{/* DECISIONS */}
 			<section
