@@ -1233,6 +1233,8 @@ export default function Game() {
 	const stateRef = useRef<GameRuntime>(createInitialState());
 	const musicRef = useRef<MusicEngine | null>(null);
 	const sfxRef = useRef<SfxEngine | null>(null);
+	const sessionStartRef = useRef<number>(0);
+	const telemetrySentRef = useRef(false);
 	const [, setTick] = useState(0);
 	const [muted, setMuted] = useState(false);
 	const [hud, setHud] = useState({
@@ -1378,12 +1380,26 @@ export default function Game() {
 		};
 	}, []);
 
+	useEffect(() => {
+		if (hud.phase === "gameover" && !telemetrySentRef.current) {
+			telemetrySentRef.current = true;
+			const duration = Math.round((Date.now() - sessionStartRef.current) / 1000);
+			void fetch("/api/telemetry", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ waveReached: hud.wave, kills: hud.kills, durationSeconds: duration }),
+			});
+		}
+	}, [hud.phase, hud.wave, hud.kills]);
+
 	const startGame = () => {
 		const s = createInitialState();
 		s.phase = "playing";
 		s.sfx = sfxRef.current;
 		startWave(s, 1);
 		stateRef.current = s;
+		sessionStartRef.current = Date.now();
+		telemetrySentRef.current = false;
 		musicRef.current?.start();
 		sfxRef.current?.ensureStarted();
 	};

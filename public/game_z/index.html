@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Brawl Killer</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ── MAIN MENU ─────────────────────────────────────────── -->
+  <div id="menu-screen" class="screen active">
+    <div class="menu-logo">
+      <div class="logo-icon">💀</div>
+      <h1 class="logo-text">BRAWL<span>KILLER</span></h1>
+      <p class="logo-sub">The Ultimate Web Brawl Experience</p>
+    </div>
+
+    <div class="brawler-select">
+      <h2>Choose Your Brawler</h2>
+      <div class="brawler-cards" id="brawler-cards"></div>
+    </div>
+
+    <div class="menu-controls">
+      <button class="btn btn-primary" id="btn-play">⚔️ Play Now</button>
+      <button class="btn btn-secondary" id="btn-how">❓ How to Play</button>
+    </div>
+
+    <div id="how-to-play" class="how-to hidden">
+      <div class="how-grid">
+        <span>🕹️ <b>WASD / Arrows</b> – Move</span>
+        <span>🖱️ <b>Mouse</b> – Aim</span>
+        <span>🖱️ <b>Left Click</b> – Shoot</span>
+        <span>⌨️ <b>Space / Auto-aim</b> – Super ability</span>
+        <span>❤️ Defeat enemies to score points</span>
+        <span>🛡️ Pick up health gems</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── GAME SCREEN ────────────────────────────────────────── -->
+  <div id="game-screen" class="screen">
+    <div id="hud">
+      <div id="hud-left">
+        <div class="hud-brawler-name" id="hud-name"></div>
+        <div class="health-bar-wrap">
+          <div class="health-bar-bg">
+            <div class="health-bar-fill" id="hp-bar"></div>
+          </div>
+          <span id="hp-text"></span>
+        </div>
+      </div>
+      <div id="hud-center">
+        <div class="wave-badge">WAVE <span id="wave-num">1</span></div>
+        <div class="score-badge">⭐ <span id="score-num">0</span></div>
+      </div>
+      <div id="hud-right">
+        <div class="super-wrap">
+          <div class="super-label">SUPER</div>
+          <div class="super-bar-bg">
+            <div class="super-bar-fill" id="super-bar"></div>
+          </div>
+          <span id="super-text">0/10</span>
+        </div>
+        <div class="ammo-dots" id="ammo-dots"></div>
+      </div>
+    </div>
+    <canvas id="game-canvas"></canvas>
+  </div>
+
+  <!-- ── GAME OVER SCREEN ───────────────────────────────────── -->
+  <div id="gameover-screen" class="screen">
+    <div class="gameover-box">
+      <div class="gameover-icon" id="gameover-icon">💀</div>
+      <h2 id="gameover-title">GAME OVER</h2>
+      <div class="gameover-stats" id="gameover-stats"></div>
+      <button class="btn btn-primary" id="btn-restart">🔄 Play Again</button>
+      <button class="btn btn-secondary" id="btn-menu">🏠 Main Menu</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>

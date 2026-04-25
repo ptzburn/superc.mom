@@ -113,6 +113,39 @@ export const sessionRelations = relations(session, ({ one }) => ({
 	user: one(user, { fields: [session.userId], references: [user.id] }),
 }));
 
+export const gameSessions = sqliteTable(
+	"game_session",
+	(d) => ({
+		id: d
+			.text({ length: 255 })
+			.notNull()
+			.primaryKey()
+			.$defaultFn(() => crypto.randomUUID()),
+		waveReached: d.integer({ mode: "number" }).notNull(),
+		kills: d.integer({ mode: "number" }).notNull(),
+		durationSeconds: d.integer({ mode: "number" }).notNull(),
+		createdAt: d
+			.integer({ mode: "timestamp" })
+			.default(sql`(unixepoch())`)
+			.notNull(),
+	}),
+	(t) => [index("game_session_created_idx").on(t.createdAt)],
+);
+
+export const balanceAnalyses = sqliteTable("balance_analysis", (d) => ({
+	id: d
+		.text({ length: 255 })
+		.notNull()
+		.primaryKey()
+		.$defaultFn(() => crypto.randomUUID()),
+	summary: d.text().notNull(),
+	analysisJson: d.text().notNull(),
+	createdAt: d
+		.integer({ mode: "timestamp" })
+		.default(sql`(unixepoch())`)
+		.notNull(),
+}));
+
 export const verification = sqliteTable(
 	"verification",
 	(d) => ({
