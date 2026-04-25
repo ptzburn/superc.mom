@@ -1,4 +1,21 @@
 {
-  "sessions": [],
-  "analyses": []
+  "sessions": [
+    {
+      "id": "33997f17-cd73-4ca2-bc0a-6505232ae20c",
+      "gameSlug": "game_z",
+      "waveReached": 2,
+      "kills": 5,
+      "durationSeconds": 31,
+      "createdAt": "2026-04-25T21:50:36.694Z"
+    }
+  ],
+  "analyses": [
+    {
+      "id": "483d6d40-bba3-46c3-9d9d-a65b8fd51fda",
+      "gameSlug": "game_z",
+      "summary": "Players are struggling to progress beyond the early waves, with a significant number dying on wave 2. The current damage output and enemy scaling appear to be too high for new players to manage effectively, leading to short and frustrating sessions.",
+      "analysisJson": "{\"summary\":\"Players are struggling to progress beyond the early waves, with a significant number dying on wave 2. The current damage output and enemy scaling appear to be too high for new players to manage effectively, leading to short and frustrating sessions.\",\"problems\":[\"Player damage output is insufficient to quickly clear early waves, especially with the introduction of Runners and Brutes.\",\"Enemy HP and speed scale too rapidly, making them difficult to kill before they overwhelm the player.\",\"The wave death distribution indicates a critical failure point around wave 2, suggesting a steep difficulty spike.\"],\"suggestions\":[{\"param\":\"PLAYER_BULLET_DAMAGE\",\"current\":11,\"suggested\":14,\"reason\":\"Increase player damage to allow for faster elimination of early-wave enemies, reducing incoming damage and pressure.\",\"impact\":\"+15% survival on wave 3\"},{\"param\":\"WALKER_HP_SCALING\",\"current\":\"30+wave*6\",\"suggested\":\"30+wave*4\",\"reason\":\"Reduce the HP scaling of Walkers to make them more manageable in later waves, preventing them from becoming bullet sponges.\",\"impact\":\"Reduces time-to-kill for basic enemies by ~20% on wave 5\"},{\"param\":\"RUNNER_CHANCE\",\"current\":0.26,\"suggested\":0.15,\"reason\":\"Lower the chance of Runners appearing in early waves (wave 3+) to give players more time to adapt to the game's pace and enemy types.\",\"impact\":\"Reduces the likelihood of encountering high-speed threats in the first few waves\"}],\"earlyGame\":\"The early game (waves 1-3) is proving to be a significant hurdle. The introduction of Brutes on wave 2 and Runners on wave 3, combined with the current damage output, creates a sharp difficulty spike that likely leads to most players dying before wave 3. New player onboarding is poor due to this immediate challenge.\",\"estimatedRetentionGain\":\"+25%\"}",
+      "createdAt": "2026-04-25T21:50:55.272Z"
+    }
+  ]
 }
