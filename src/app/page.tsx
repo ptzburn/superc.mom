@@ -19,16 +19,29 @@ export default function Home() {
 }
 
 function Dashboard() {
-	const stats = api.dashboard.getStats.useQuery(undefined, { refetchInterval: 10_000 });
-	const sessions = api.dashboard.getRecentSessions.useQuery(undefined, { refetchInterval: 10_000 });
-	const analysis = api.dashboard.getLatestAnalysis.useQuery(undefined, { refetchInterval: 15_000 });
 	const [games, setGames] = useState<GameOption[]>([]);
 	const [selectedGameRoute, setSelectedGameRoute] = useState("/game");
 	const [gamesError, setGamesError] = useState<string | null>(null);
 	const [isAnalysing, setIsAnalysing] = useState(false);
 	const [analyseError, setAnalyseError] = useState<string | null>(null);
+	const [applyError, setApplyError] = useState<string | null>(null);
+	const [applyNotice, setApplyNotice] = useState<string | null>(null);
+	const [applyingSuggestionKey, setApplyingSuggestionKey] = useState<string | null>(null);
 	const [githubUrl, setGithubUrl] = useState("");
 	const [addGameNotice, setAddGameNotice] = useState<string | null>(null);
+	const selectedGameSlug = selectedGameRoute.replace(/^\//, "") || "game";
+	const stats = api.dashboard.getStats.useQuery(
+		{ gameSlug: selectedGameSlug },
+		{ refetchInterval: 10_000 },
+	);
+	const sessions = api.dashboard.getRecentSessions.useQuery(
+		{ gameSlug: selectedGameSlug },
+		{ refetchInterval: 10_000 },
+	);
+	const analysis = api.dashboard.getLatestAnalysis.useQuery(
+		{ gameSlug: selectedGameSlug },
+		{ refetchInterval: 15_000 },
+	);
 
 	useEffect(() => {
 		let alive = true;
@@ -68,7 +81,7 @@ function Dashboard() {
 			const res = await fetch("/api/balance", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ gameRoute: selectedGameRoute }),
+				body: JSON.stringify({ gameSlug: selectedGameSlug }),
 			});
 			const data = (await res.json()) as { error?: string };
 			if (!res.ok) throw new Error(data.error ?? "Analysis failed");
@@ -77,6 +90,32 @@ function Dashboard() {
 			setAnalyseError(e instanceof Error ? e.message : "Unknown error");
 		} finally {
 			setIsAnalysing(false);
+		}
+	};
+
+	const applySuggestion = async (param: string, suggested: number | string, key: string) => {
+		setApplyingSuggestionKey(key);
+		setApplyError(null);
+		setApplyNotice(null);
+		try {
+			const res = await fetch("/api/apply-suggestion", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					gameSlug: selectedGameSlug,
+					param,
+					suggested,
+				}),
+			});
+			const data = (await res.json()) as { error?: string; updatedConstant?: string; updatedValue?: number };
+			if (!res.ok) throw new Error(data.error ?? "Failed to apply suggestion");
+			setApplyNotice(
+				`Applied ${param} -> ${String(suggested)} (updated ${data.updatedConstant ?? "constant"}).`,
+			);
+		} catch (e) {
+			setApplyError(e instanceof Error ? e.message : "Unknown error while applying suggestion");
+		} finally {
+			setApplyingSuggestionKey(null);
 		}
 	};
 
@@ -242,6 +281,16 @@ function Dashboard() {
 						{analyseError}
 					</div>
 				)}
+				{applyError && (
+					<div className="mb-4 rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-sm text-red-300">
+						{applyError}
+					</div>
+				)}
+				{applyNotice && (
+					<div className="mb-4 rounded-lg bg-emerald-950 border border-emerald-800 px-4 py-3 text-sm text-emerald-300">
+						{applyNotice}
+					</div>
+				)}
 
 				{!analysis.data ? (
 					<p className="text-neutral-500 text-sm">
@@ -291,7 +340,10 @@ function Dashboard() {
 									)}
 								</div>
 								<div className="space-y-3">
-									{analysis.data.data.suggestions.map((s, i) => (
+									{analysis.data.data.suggestions.map((s, i) => {
+										const key = `${s.param}-${i}`;
+										const isApplying = applyingSuggestionKey === key;
+										return (
 										<div key={i} className="rounded-lg bg-neutral-800 p-4">
 											<div className="flex items-start justify-between gap-4">
 												<div>
@@ -301,10 +353,21 @@ function Dashboard() {
 													</div>
 													<p className="text-neutral-400 text-sm">{s.reason}</p>
 												</div>
-												<span className="shrink-0 rounded-full bg-emerald-900/60 px-2 py-0.5 text-xs text-emerald-300 whitespace-nowrap">{s.impact}</span>
+												<div className="flex flex-col items-end gap-2">
+													<span className="shrink-0 rounded-full bg-emerald-900/60 px-2 py-0.5 text-xs text-emerald-300 whitespace-nowrap">{s.impact}</span>
+													<button
+														type="button"
+														onClick={() => applySuggestion(s.param, s.suggested, key)}
+														disabled={isApplying}
+														className="rounded-md border border-violet-600/60 bg-violet-900/30 px-2.5 py-1 text-xs font-semibold text-violet-200 hover:bg-violet-900/50 disabled:opacity-50"
+													>
+														{isApplying ? "Applying..." : "Apply"}
+													</button>
+												</div>
 											</div>
 										</div>
-									))}
+									);
+									})}
 								</div>
 							</div>
 						)}

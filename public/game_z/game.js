@@ -134,6 +134,7 @@
   let killsThisWave;
   let enemiesTotal;
   let waveClearing;
+  let sessionStartedAt;
   let ammo;
   let lastReload;
   let superCharge;
@@ -288,6 +289,7 @@
     ammo = b.maxAmmo;
     lastReload = 0;
     superCharge = 0;
+    sessionStartedAt = Date.now();
 
     camera = { x: midX - canvas.width / 2, y: midY - canvas.height / 2 };
 
@@ -973,6 +975,18 @@
       <div class="stat-row"><span>Waves Survived</span><span>${wave}</span></div>
       <div class="stat-row"><span>Enemies Defeated</span><span>${killsThisWave + (wave - 1) * 3}</span></div>
     `;
+
+    const durationSeconds = Math.max(1, Math.round((Date.now() - sessionStartedAt) / 1000));
+    void fetch("/api/telemetry", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        gameSlug: "game_z",
+        waveReached: wave,
+        kills: killsThisWave + (wave - 1) * 3,
+        durationSeconds,
+      }),
+    });
 
     showScreen("gameover-screen");
   }

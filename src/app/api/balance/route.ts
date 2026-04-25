@@ -1,7 +1,8 @@
-import { desc } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { db } from "~/server/db";
-import { balanceAnalyses, gameSessions } from "~/server/db/schema";
+import {
+	appendAnalysis,
+	getRecentSessionsByGame,
+} from "~/server/analytics-store";
 
 interface Suggestion {
 	param: string;
@@ -19,12 +20,10 @@ interface AnalysisResult {
 	estimatedRetentionGain: string;
 }
 
-export async function POST() {
-	const sessions = await db
-		.select()
-		.from(gameSessions)
-		.orderBy(desc(gameSessions.createdAt))
-		.limit(200);
+export async function POST(req: Request) {
+	const body = (await req.json().catch(() => ({}))) as { gameRoute?: string; gameSlug?: string };
+	const gameSlug = (body.gameSlug ?? body.gameRoute ?? "game").replace(/^\//, "");
+	const sessions = await getRecentSessionsByGame(gameSlug, 200);
 
 	if (sessions.length === 0) {
 		return NextResponse.json({ error: "No sessions yet — play a game first!" }, { status: 400 });
@@ -69,32 +68,64 @@ Analyze and respond with JSON only (no markdown):
   "estimatedRetentionGain": "+X%"
 }`;
 
-	const apiKey = process.env.ANTHROPIC_API_KEY;
-	if (!apiKey) {
-		return NextResponse.json({ error: "ANTHROPIC_API_KEY not set" }, { status: 500 });
+	const geminiKey = process.env.GEMINI_API_KEY;
+	const anthropicKey = process.env.ANTHROPIC_API_KEY;
+
+	let text = "";
+
+	if (geminiKey) {
+		const response = await fetch(
+			`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${encodeURIComponent(geminiKey)}`,
+			{
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					contents: [{ parts: [{ text: prompt }] }],
+					generationConfig: {
+						temperature: 0.2,
+						maxOutputTokens: 1024,
+					},
+				}),
+			},
+		);
+
+		if (!response.ok) {
+			const err = await response.text();
+			return NextResponse.json({ error: `Gemini API error: ${err}` }, { status: 500 });
+		}
+
+		const data = (await response.json()) as {
+			candidates?: { content?: { parts?: { text?: string }[] } }[];
+		};
+		text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+	} else if (anthropicKey) {
+		const response = await fetch("https://api.anthropic.com/v1/messages", {
+			method: "POST",
+			headers: {
+				"x-api-key": anthropicKey,
+				"anthropic-version": "2023-06-01",
+				"content-type": "application/json",
+			},
+			body: JSON.stringify({
+				model: "claude-haiku-4-5-20251001",
+				max_tokens: 1024,
+				messages: [{ role: "user", content: prompt }],
+			}),
+		});
+
+		if (!response.ok) {
+			const err = await response.text();
+			return NextResponse.json({ error: `Anthropic API error: ${err}` }, { status: 500 });
+		}
+
+		const data = (await response.json()) as { content: { text: string }[] };
+		text = data.content[0]?.text ?? "";
+	} else {
+		return NextResponse.json(
+			{ error: "Set GEMINI_API_KEY (preferred) or ANTHROPIC_API_KEY in .env" },
+			{ status: 500 },
+		);
 	}
-
-	const response = await fetch("https://api.anthropic.com/v1/messages", {
-		method: "POST",
-		headers: {
-			"x-api-key": apiKey,
-			"anthropic-version": "2023-06-01",
-			"content-type": "application/json",
-		},
-		body: JSON.stringify({
-			model: "claude-haiku-4-5-20251001",
-			max_tokens: 1024,
-			messages: [{ role: "user", content: prompt }],
-		}),
-	});
-
-	if (!response.ok) {
-		const err = await response.text();
-		return NextResponse.json({ error: `Anthropic API error: ${err}` }, { status: 500 });
-	}
-
-	const data = (await response.json()) as { content: { text: string }[] };
-	const text = data.content[0]?.text ?? "";
 
 	let analysis: AnalysisResult;
 	try {
@@ -110,7 +141,8 @@ Analyze and respond with JSON only (no markdown):
 		analysis = { summary: text, problems: [], suggestions: [], earlyGame: "", estimatedRetentionGain: "unknown" };
 	}
 
-	await db.insert(balanceAnalyses).values({
+	await appendAnalysis({
+		gameSlug,
 		summary: analysis.summary,
 		analysisJson: JSON.stringify(analysis),
 	});

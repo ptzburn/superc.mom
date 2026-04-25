@@ -19,6 +19,8 @@ const ALLY_SEPARATION = ALLY_RADIUS * 3;
 const BULLET_SPEED = 760;
 const BULLET_DAMAGE = 11;
 const ALLY_BULLET_DAMAGE = 7;
+const RUNNER_CHANCE = 0.26;
+const BRUTE_CHANCE = 0.12;
 const PLAYER_MAX_HP = 100;
 const ALLY_MAX_HP = 70;
 const WAVE_BREAK_SECONDS = 2;
@@ -382,13 +384,13 @@ function spawnZombie(s: GameRuntime) {
 	let radius = 14;
 	let damage = 14;
 	const r = Math.random();
-	if (wave >= 3 && r < 0.26) {
+	if (wave >= 3 && r < RUNNER_CHANCE) {
 		type = "runner";
 		hp = 18 + wave * 3;
 		speed = 145 + wave * 4;
 		radius = 11;
 		damage = 9;
-	} else if (wave >= 2 && r < 0.38) {
+	} else if (wave >= 2 && r < RUNNER_CHANCE + BRUTE_CHANCE) {
 		type = "brute";
 		hp = 110 + wave * 18;
 		speed = 48 + wave * 1.4;
@@ -1387,7 +1389,12 @@ export default function Game() {
 			void fetch("/api/telemetry", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ waveReached: hud.wave, kills: hud.kills, durationSeconds: duration }),
+				body: JSON.stringify({
+					gameSlug: "game",
+					waveReached: hud.wave,
+					kills: hud.kills,
+					durationSeconds: duration,
+				}),
 			});
 		}
 	}, [hud.phase, hud.wave, hud.kills]);

@@ -20,6 +20,7 @@ export const env = createEnv({
 				? z.string()
 				: z.string().optional(),
 		DATABASE_URL: z.string().url(),
+		GEMINI_API_KEY: z.string().optional(),
 		ANTHROPIC_API_KEY: z.string().optional(),
 		NODE_ENV: z
 			.enum(["development", "test", "production"])
@@ -45,6 +46,7 @@ export const env = createEnv({
 		BETTER_AUTH_GITHUB_CLIENT_SECRET:
 			process.env.BETTER_AUTH_GITHUB_CLIENT_SECRET,
 		DATABASE_URL: process.env.DATABASE_URL,
+		GEMINI_API_KEY: process.env.GEMINI_API_KEY,
 		ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
 		NODE_ENV: process.env.NODE_ENV,
 	},
