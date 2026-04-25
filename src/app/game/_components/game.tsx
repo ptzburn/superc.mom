@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { EditPlan } from "~/lib/ai-editor/types";
 import { createMusicEngine, type MusicEngine } from "./music";
 import { createSfxEngine, type SfxEngine } from "./sfx";
 
@@ -28,9 +29,11 @@ type Vec = { x: number; y: number };
 type Bullet = {
 	pos: Vec;
 	vel: Vec;
+	startPos: Vec;
 	damage: number;
 	ttl: number;
 	team: "player" | "ally";
+	owner: string;
 };
 
 type ZombieType = "walker" | "runner" | "brute";
@@ -119,7 +122,54 @@ type GameRuntime = {
 	shooting: boolean;
 	paused: boolean;
 	sfx: SfxEngine | null;
+	// Viral-moment instrumentation for the post-match AI edit.
+	events: GameEvent[];
+	matchStartMs: number;
+	lastPlayerKillMs: number;
+	lowHpFlaggedAt: number;        // -1 when not flagged
 };
+
+export type GameEvent =
+	| {
+			kind: "kill";
+			t: number;
+			killer: string;
+			victim: string;
+			killerHp: number;
+			killerMaxHp: number;
+			victimKind: string;
+			range: number;
+			chainSeconds: number;
+	  }
+	| { kind: "ally_kill"; t: number; killer: string; victim: string }
+	| { kind: "ally_death"; t: number; victim: string }
+	| { kind: "low_hp_save"; t: number; subject: string; hpAfter: number }
+	| { kind: "long_shot"; t: number; killer: string; range: number }
+	| {
+			kind: "match_end";
+			t: number;
+			result: "win" | "loss";
+			durationMs: number;
+	  };
+
+export function viralScore(e: GameEvent): number {
+	let s = 0;
+	if (e.kind === "kill") {
+		s += 30;
+		if (e.chainSeconds < 4) s += 40;
+		if (e.chainSeconds < 2) s += 30;
+		if (e.killerHp / e.killerMaxHp < 0.25) s += 35;
+		if (e.range > 400) s += 25;
+	}
+	if (e.kind === "low_hp_save") s += 25;
+	if (e.kind === "ally_death") s -= 10;
+	if (e.kind === "match_end") s += e.result === "win" ? 50 : 15;
+	return s;
+}
+
+function nowT(s: GameRuntime) {
+	return performance.now() - s.matchStartMs;
+}
 
 function clamp(n: number, min: number, max: number) {
 	return Math.min(Math.max(n, min), max);
@@ -351,6 +401,10 @@ function createInitialState(): GameRuntime {
 		shooting: false,
 		paused: false,
 		sfx: null,
+		events: [],
+		matchStartMs: performance.now(),
+		lastPlayerKillMs: -Infinity,
+		lowHpFlaggedAt: -1,
 	};
 }
 
@@ -429,13 +483,14 @@ function fireBullet(
 	angle: number,
 	dmg: number,
 	team: "player" | "ally",
+	owner: string,
 ) {
 	const offsetR = 18;
+	const sx = pos.x + Math.cos(angle) * offsetR;
+	const sy = pos.y + Math.sin(angle) * offsetR;
 	s.bullets.push({
-		pos: {
-			x: pos.x + Math.cos(angle) * offsetR,
-			y: pos.y + Math.sin(angle) * offsetR,
-		},
+		pos: { x: sx, y: sy },
+		startPos: { x: sx, y: sy },
 		vel: {
 			x: Math.cos(angle) * BULLET_SPEED,
 			y: Math.sin(angle) * BULLET_SPEED,
@@ -443,6 +498,7 @@ function fireBullet(
 		damage: dmg,
 		ttl: 1.2,
 		team,
+		owner,
 	});
 }
 
@@ -494,12 +550,27 @@ function update(s: GameRuntime, dt: number) {
 	spawnLogic(s, d);
 	if (s.shakeTime > 0) s.shakeTime -= d;
 	if (s.bannerTime > 0) s.bannerTime -= d;
+
+	// Track when the player first dips below 25% HP — used by low_hp_save.
+	const hpFrac = s.player.hp / s.player.maxHp;
+	if (hpFrac < 0.25 && s.lowHpFlaggedAt < 0) {
+		s.lowHpFlaggedAt = nowT(s);
+	} else if (hpFrac >= 0.4) {
+		s.lowHpFlaggedAt = -1;
+	}
+
 	if (s.player.hp <= 0) {
 		s.phase = "gameover";
 		s.bannerText = "OVERRUN";
 		s.bannerTime = 9999;
 		s.bannerMaxTime = 1;
 		spawnBlood(s, s.player.pos, 30);
+		s.events.push({
+			kind: "match_end",
+			t: nowT(s),
+			result: "loss",
+			durationMs: nowT(s),
+		});
 	}
 }
 
@@ -533,7 +604,7 @@ function updatePlayer(s: GameRuntime, dt: number) {
 	p.cooldown = Math.max(0, p.cooldown - dt);
 	p.hitFlash = Math.max(0, p.hitFlash - dt);
 	if (s.shooting && p.cooldown <= 0) {
-		fireBullet(s, p.pos, p.angle, BULLET_DAMAGE, "player");
+		fireBullet(s, p.pos, p.angle, BULLET_DAMAGE, "player", "player");
 		spawnMuzzleFlash(s, p.pos, p.angle);
 		s.sfx?.play("playerShoot");
 		p.cooldown = PLAYER_FIRE_RATE;
@@ -562,7 +633,7 @@ function updateAllies(s: GameRuntime, dt: number) {
 			desiredY = z.pos.y + (dy / d) * ALLY_IDEAL_RANGE;
 			a.angle = Math.atan2(z.pos.y - a.pos.y, z.pos.x - a.pos.x);
 			if (a.cooldown <= 0) {
-				fireBullet(s, a.pos, a.angle, ALLY_BULLET_DAMAGE, "ally");
+				fireBullet(s, a.pos, a.angle, ALLY_BULLET_DAMAGE, "ally", `ally:${a.uniform}`);
 				spawnMuzzleFlash(s, a.pos, a.angle);
 				s.sfx?.play("allyShoot");
 				a.cooldown = ALLY_FIRE_RATE;
@@ -649,6 +720,11 @@ function updateZombies(s: GameRuntime, dt: number) {
 					best.ally.alive = false;
 					best.ally.respawnTimer = 0;
 					spawnBlood(s, best.ally.pos, 18);
+					s.events.push({
+						kind: "ally_death",
+						t: nowT(s),
+						victim: `ally:${best.ally.uniform}`,
+					});
 				}
 			}
 		}
@@ -732,6 +808,56 @@ function updateBullets(s: GameRuntime, dt: number) {
 					s.kills += 1;
 					spawnBlood(s, z.pos, 16);
 					s.sfx?.play("zombieKill");
+					const range = Math.hypot(
+						b.pos.x - b.startPos.x,
+						b.pos.y - b.startPos.y,
+					);
+					const t = nowT(s);
+					if (b.team === "player") {
+						const chainSeconds = (t - s.lastPlayerKillMs) / 1000;
+						s.events.push({
+							kind: "kill",
+							t,
+							killer: "player",
+							victim: `zombie:${z.type}`,
+							killerHp: Math.round(s.player.hp),
+							killerMaxHp: s.player.maxHp,
+							victimKind: z.type,
+							range,
+							chainSeconds,
+						});
+						s.lastPlayerKillMs = t;
+						if (range > 350) {
+							s.events.push({
+								kind: "long_shot",
+								t,
+								killer: "player",
+								range,
+							});
+						}
+						// Low-HP save: if the kill closed a window where player
+						// was flagged below 25%, fire a save event.
+						if (
+							s.lowHpFlaggedAt > 0 &&
+							t - s.lowHpFlaggedAt < 1500 &&
+							s.player.hp > 0
+						) {
+							s.events.push({
+								kind: "low_hp_save",
+								t,
+								subject: "player",
+								hpAfter: Math.round(s.player.hp),
+							});
+							s.lowHpFlaggedAt = -1;
+						}
+					} else {
+						s.events.push({
+							kind: "ally_kill",
+							t,
+							killer: b.owner,
+							victim: `zombie:${z.type}`,
+						});
+					}
 				} else {
 					s.sfx?.play("zombieHit");
 				}
@@ -1235,6 +1361,14 @@ export default function Game() {
 	const sfxRef = useRef<SfxEngine | null>(null);
 	const [, setTick] = useState(0);
 	const [muted, setMuted] = useState(false);
+	const recorderRef = useRef<MediaRecorder | null>(null);
+	const chunksRef = useRef<Blob[]>([]);
+	const [editState, setEditState] = useState<{
+		blobUrl: string | null;
+		plan: EditPlan | null;
+		loading: boolean;
+		eventCount: number;
+	}>({ blobUrl: null, plan: null, loading: false, eventCount: 0 });
 	const [hud, setHud] = useState({
 		hp: PLAYER_MAX_HP,
 		maxHp: PLAYER_MAX_HP,
@@ -1269,6 +1403,63 @@ export default function Game() {
 		if (hud.phase === "playing" && !hud.paused) m.start();
 		else m.stop();
 	}, [hud.phase, hud.paused]);
+
+	// On gameover: stop recorder, ship events to /api/edit-plan, render result.
+	useEffect(() => {
+		if (hud.phase !== "gameover") return;
+		const events = [...stateRef.current.events];
+		setEditState({
+			blobUrl: null,
+			plan: null,
+			loading: true,
+			eventCount: events.length,
+		});
+
+		const finishUp = async (blob: Blob | null) => {
+			const blobUrl = blob ? URL.createObjectURL(blob) : null;
+			try {
+				const res = await fetch("/api/edit-plan", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({ events }),
+				});
+				if (!res.ok) throw new Error(`edit-plan ${res.status}`);
+				const plan: EditPlan = await res.json();
+				setEditState({
+					blobUrl,
+					plan,
+					loading: false,
+					eventCount: events.length,
+				});
+			} catch (err) {
+				console.error("[game] edit-plan failed", err);
+				setEditState({
+					blobUrl,
+					plan: null,
+					loading: false,
+					eventCount: events.length,
+				});
+			}
+		};
+
+		const rec = recorderRef.current;
+		if (rec && rec.state === "recording") {
+			rec.onstop = () => {
+				const blob =
+					chunksRef.current.length > 0
+						? new Blob(chunksRef.current, { type: "video/webm" })
+						: null;
+				void finishUp(blob);
+			};
+			try {
+				rec.stop();
+			} catch {
+				void finishUp(null);
+			}
+		} else {
+			void finishUp(null);
+		}
+	}, [hud.phase]);
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -1378,14 +1569,55 @@ export default function Game() {
 		};
 	}, []);
 
+	const startMatchRecording = () => {
+		const canvas = canvasRef.current;
+		if (!canvas || typeof MediaRecorder === "undefined") return;
+		chunksRef.current = [];
+		let stream: MediaStream;
+		try {
+			stream = canvas.captureStream(30);
+		} catch {
+			return;
+		}
+		let mime = "";
+		for (const t of [
+			"video/webm;codecs=vp9",
+			"video/webm;codecs=vp8",
+			"video/webm",
+		]) {
+			if (MediaRecorder.isTypeSupported(t)) {
+				mime = t;
+				break;
+			}
+		}
+		try {
+			const r = mime
+				? new MediaRecorder(stream, {
+						mimeType: mime,
+						videoBitsPerSecond: 2_500_000,
+					})
+				: new MediaRecorder(stream);
+			r.ondataavailable = (e) => {
+				if (e.data.size > 0) chunksRef.current.push(e.data);
+			};
+			r.start(200);
+			recorderRef.current = r;
+		} catch {
+			recorderRef.current = null;
+		}
+	};
+
 	const startGame = () => {
 		const s = createInitialState();
 		s.phase = "playing";
 		s.sfx = sfxRef.current;
+		s.matchStartMs = performance.now();
 		startWave(s, 1);
 		stateRef.current = s;
 		musicRef.current?.start();
 		sfxRef.current?.ensureStarted();
+		setEditState({ blobUrl: null, plan: null, loading: false, eventCount: 0 });
+		startMatchRecording();
 	};
 
 	const resume = () => {
@@ -1487,21 +1719,92 @@ export default function Game() {
 
 				{hud.phase === "gameover" && (
 					<Overlay>
-						<h1 className="mb-2 font-extrabold text-4xl text-red-400 tracking-tight">
-							OVERRUN
-						</h1>
-						<p className="mb-6 text-neutral-300">
-							You held <span className="font-bold text-white">{hud.wave}</span>{" "}
-							wave{hud.wave === 1 ? "" : "s"} and dropped{" "}
-							<span className="font-bold text-white">{hud.kills}</span> of them.
-						</p>
-						<button
-							className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
-							onClick={startGame}
-							type="button"
-						>
-							REDEPLOY
-						</button>
+						<div className="flex w-full max-w-3xl flex-col items-center gap-4 px-6">
+							<h1 className="font-extrabold text-3xl text-red-400 tracking-tight">
+								OVERRUN
+							</h1>
+							<p className="text-neutral-300 text-sm">
+								Held{" "}
+								<span className="font-bold text-white">{hud.wave}</span> wave
+								{hud.wave === 1 ? "" : "s"} · dropped{" "}
+								<span className="font-bold text-white">{hud.kills}</span> ·{" "}
+								<span className="font-bold text-white">
+									{editState.eventCount}
+								</span>{" "}
+								events captured
+							</p>
+
+							<div className="grid w-full grid-cols-1 gap-4 md:grid-cols-2">
+								{/* Recorded match preview */}
+								<div className="overflow-hidden rounded-lg border border-neutral-700 bg-black">
+									{editState.blobUrl ? (
+										<video
+											autoPlay
+											className="block aspect-video w-full"
+											loop
+											muted
+											playsInline
+											src={editState.blobUrl}
+										/>
+									) : (
+										<div className="flex aspect-video w-full items-center justify-center text-neutral-500 text-xs">
+											no recording captured
+										</div>
+									)}
+									{editState.blobUrl && (
+										<a
+											className="block bg-neutral-800 px-3 py-2 text-center font-mono text-[11px] text-neutral-200 uppercase tracking-wider transition hover:bg-neutral-700"
+											download="brrawl-match.webm"
+											href={editState.blobUrl}
+										>
+											download match webm
+										</a>
+									)}
+								</div>
+
+								{/* AI editor decisions */}
+								<div className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
+									<div className="flex items-center justify-between border-neutral-800 border-b bg-neutral-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[.18em]">
+										<span className="text-emerald-300">ai editor</span>
+										<span className="text-neutral-500">
+											{editState.loading
+												? "thinking…"
+												: editState.plan
+													? "ready"
+													: "no plan"}
+										</span>
+									</div>
+									{editState.loading && (
+										<div className="flex h-full min-h-[180px] items-center justify-center px-4 py-6 text-neutral-500 text-xs">
+											<div className="space-y-2 text-center">
+												<div className="font-mono text-emerald-300/80">
+													→ scoring {editState.eventCount} events
+												</div>
+												<div className="font-mono text-neutral-500">
+													→ asking the model for an edit plan…
+												</div>
+											</div>
+										</div>
+									)}
+									{!editState.loading && editState.plan && (
+										<EditPlanCard plan={editState.plan} />
+									)}
+									{!editState.loading && !editState.plan && (
+										<div className="px-4 py-6 font-mono text-[11px] text-neutral-500">
+											plan unavailable. /api/edit-plan failed — see console.
+										</div>
+									)}
+								</div>
+							</div>
+
+							<button
+								className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
+								onClick={startGame}
+								type="button"
+							>
+								REDEPLOY
+							</button>
+						</div>
 					</Overlay>
 				)}
 
@@ -1528,8 +1831,71 @@ export default function Game() {
 
 function Overlay({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/65 backdrop-blur-sm">
+		<div className="absolute inset-0 flex flex-col items-center justify-center overflow-y-auto rounded-lg bg-black/75 px-4 py-6 backdrop-blur-sm">
 			{children}
+		</div>
+	);
+}
+
+function EditPlanCard({ plan }: { plan: EditPlan }) {
+	return (
+		<div className="space-y-3 px-4 py-4 font-mono text-[11px] text-neutral-200">
+			<div className="grid grid-cols-2 gap-2">
+				<div className="rounded bg-neutral-900 px-2 py-1.5">
+					<div className="text-[9px] text-neutral-500 uppercase tracking-wider">
+						mood
+					</div>
+					<div className="font-bold text-amber-300">{plan.mood}</div>
+				</div>
+				<div className="rounded bg-neutral-900 px-2 py-1.5">
+					<div className="text-[9px] text-neutral-500 uppercase tracking-wider">
+						audio
+					</div>
+					<div className="font-bold text-cyan-300">{plan.audio}</div>
+				</div>
+			</div>
+			<div className="rounded bg-neutral-900 px-2 py-1.5">
+				<div className="text-[9px] text-neutral-500 uppercase tracking-wider">
+					hook
+				</div>
+				<div className="font-medium text-white">"{plan.hook}"</div>
+			</div>
+			<div className="space-y-1">
+				<div className="text-[9px] text-neutral-500 uppercase tracking-wider">
+					{plan.shots.length} shot{plan.shots.length === 1 ? "" : "s"}
+				</div>
+				{plan.shots.map((s, i) => (
+					<div
+						className="flex items-center gap-2 rounded bg-neutral-900 px-2 py-1.5"
+						// biome-ignore lint/suspicious/noArrayIndexKey: stable order
+						key={i}
+					>
+						<span className="text-neutral-500">#{i + 1}</span>
+						<span className="flex-1 text-white">
+							{s.caption.split(/\[([^\]]+)\]/g).map((part, j) =>
+								j % 2 === 1 ? (
+									// biome-ignore lint/suspicious/noArrayIndexKey: stable
+									<span className="text-amber-300" key={j}>
+										{part}
+									</span>
+								) : (
+									// biome-ignore lint/suspicious/noArrayIndexKey: stable
+									<span key={j}>{part}</span>
+								),
+							)}
+						</span>
+						<span className="text-[9px] text-neutral-500">
+							{(s.lengthMs / 1000).toFixed(1)}s · {s.transition ?? "cut"}
+						</span>
+					</div>
+				))}
+			</div>
+			<div className="rounded bg-neutral-900 px-2 py-1.5">
+				<div className="text-[9px] text-neutral-500 uppercase tracking-wider">
+					outro
+				</div>
+				<div className="font-medium text-white">"{plan.outro}"</div>
+			</div>
 		</div>
 	);
 }
