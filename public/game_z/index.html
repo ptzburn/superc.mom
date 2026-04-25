@@ -169,6 +169,46 @@ let mediaRecorder = null;
 let recordChunks = [];
 let recordedBlob = null;
 
+// ---- Typed event log (parent React app consumes via postMessage) ----
+let gameEvents = [];          // GameEvent[]
+let lastKillTimeByShooter = {}; // unitId -> ms-since-match-start
+let lowHpFiredFor = {};       // unitId -> true once low_hp_save was emitted
+let pendingLowHpFor = {};     // unitId -> ms-since-match-start when HP first dropped <25%
+let matchEndSent = false;
+
+function unitId(u) {
+  if (!u) return 'unknown';
+  if (u._eid) return u._eid;
+  // Stable id derived from team/controller/kind plus position in spawn order.
+  let idx = -1;
+  if (Array.isArray(units)) idx = units.indexOf(u);
+  u._eid = `${u.team}.${u.controller}.${u.kind}${idx >= 0 ? '#' + idx : ''}`;
+  return u._eid;
+}
+
+function nowT() {
+  return performance.now() - matchStartMs;
+}
+
+function pushEvent(ev) {
+  gameEvents.push(ev);
+}
+
+function viralScore(e) {
+  let s = 0;
+  if (e.kind === 'kill') {
+    s += 30;
+    if (e.chainSeconds < 4)          s += 40;
+    if (e.chainSeconds < 2)          s += 30;
+    if (e.killerHp / e.killerMaxHp < 0.25) s += 35;
+    if (e.range > 400)               s += 25;
+  }
+  if (e.kind === 'low_hp_save') s += 25;
+  if (e.kind === 'ally_death')  s -= 10;
+  if (e.kind === 'match_end')   s += e.result === 'win' ? 50 : 15;
+  return s;
+}
+
 // Caption phrases — bracketed [WORD] gets the accent color, the rest is white.
 const PHRASES = {
   triple:     ['TRIPLE [KILL!]',   'ABSOLUTE [WIPE]',     '[CLEANED] HOUSE',         '[NUKE] ACTIVATED'],
@@ -282,6 +322,11 @@ function start() {
   editing = false;
   editPending = null;
   recordedBlob = null;
+  gameEvents = [];
+  lastKillTimeByShooter = {};
+  lowHpFiredFor = {};
+  pendingLowHpFor = {};
+  matchEndSent = false;
   if (shareBtn) shareBtn.classList.add('hidden');
   stopPhonk();
   stopRecording();
@@ -328,13 +373,45 @@ function stopMatchRecording() {
   });
 }
 
+async function postMatchEndToParent(win) {
+  if (matchEndSent) return;
+  matchEndSent = true;
+  // Make sure the recording is finalized before we hand a blob URL to the parent.
+  try { await stopMatchRecording(); } catch (_) {}
+  const endEvent = {
+    kind: 'match_end',
+    t: nowT(),
+    result: win ? 'win' : 'loss',
+    durationMs: nowT()
+  };
+  pushEvent(endEvent);
+  let blobUrl = null;
+  try {
+    if (recordedMatchBlob) blobUrl = URL.createObjectURL(recordedMatchBlob);
+  } catch (_) { blobUrl = null; }
+  const events = gameEvents.slice();
+  const scores = events.map(e => viralScore(e));
+  try {
+    if (typeof parent !== 'undefined' && parent !== window) {
+      parent.postMessage({ type: 'BRRAWL_MATCH_END', events, scores, blobUrl }, '*');
+    } else {
+      window.postMessage({ type: 'BRRAWL_MATCH_END', events, scores, blobUrl }, '*');
+    }
+  } catch (e) { console.warn('BRRAWL_MATCH_END postMessage failed', e); }
+}
+
 function endGame(msg, win) {
   running = false;
+  // Fire-and-forget: notify parent regardless of whether we run the legacy
+  // edit pipeline. stopMatchRecording is awaited inside postMatchEndToParent
+  // so the blob is finalized before postMessage.
+  postMatchEndToParent(win);
   if (killTimes.length > 0) {
     editPending = { msg, win };
     startEdit();
   } else {
-    stopMatchRecording();
+    // postMatchEndToParent already awaits stopMatchRecording; we can show the
+    // overlay immediately — the legacy fire-and-forget call here was fine too.
     showFinalOverlay(msg, win);
   }
 }
@@ -1416,6 +1493,24 @@ function update() {
     u.vy = u.y - sy;
     if (u.hpAnim > u.hp) u.hpAnim = Math.max(u.hp, u.hpAnim - 0.6);
     if (u.hitFlash > 0) u.hitFlash--;
+
+    // Low-HP save detection: arm when HP first drops <25%; fire if still alive 1.5s later.
+    const id = unitId(u);
+    if (u.hp > 0 && !lowHpFiredFor[id]) {
+      const ratio = u.hp / u.max;
+      if (pendingLowHpFor[id] == null) {
+        if (ratio < 0.25) pendingLowHpFor[id] = nowT();
+      } else {
+        if (ratio >= 0.25) {
+          // recovered above threshold — reset arm so a future drop can re-arm.
+          delete pendingLowHpFor[id];
+        } else if (nowT() - pendingLowHpFor[id] >= 1500) {
+          pushEvent({ kind: 'low_hp_save', t: nowT(), subject: id, hpAfter: u.hp });
+          lowHpFiredFor[id] = true;
+          delete pendingLowHpFor[id];
+        }
+      }
+    }
   }
 
   if (matchOver) bullets = [];
@@ -1437,6 +1532,37 @@ function update() {
         if (u.hp <= 0) {
           spawnParticles(u.x, u.y, u.color, 22);
           shake = Math.max(shake, 9);
+          // ---- Typed event emission (runs alongside legacy banner/snapshot) ----
+          const tEv = nowT();
+          const shotDist = b.shooter ? Math.hypot(b.x - b.startX, b.y - b.startY) : 0;
+          if (b.shooter && b.shooter.team === 'blue' && u.team === 'red') {
+            const kid = unitId(b.shooter);
+            const prevT = lastKillTimeByShooter[kid];
+            const chainSec = (prevT == null) ? Infinity : Math.max(0, (tEv - prevT) / 1000);
+            lastKillTimeByShooter[kid] = tEv;
+            if (b.shooter.controller === 'human') {
+              pushEvent({
+                kind: 'kill', t: tEv,
+                killer: kid,
+                victim: unitId(u),
+                killerHp: Math.max(0, b.shooter.hp),
+                killerMaxHp: b.shooter.max,
+                victimKind: u.kind,
+                range: shotDist,
+                chainSeconds: chainSec
+              });
+              if (shotDist > 400) {
+                pushEvent({ kind: 'long_shot', t: tEv, killer: kid, range: shotDist });
+              }
+            } else {
+              pushEvent({ kind: 'ally_kill', t: tEv, killer: kid, victim: unitId(u) });
+            }
+          } else if (u.team === 'blue') {
+            pushEvent({ kind: 'ally_death', t: tEv, victim: unitId(u) });
+          }
+          // Cancel any pending low_hp_save for the dead unit (they died before the 1.5s window).
+          delete pendingLowHpFor[unitId(u)];
+          // ---- legacy banner/snapshot path, unchanged ----
           if (b.shooter && b.shooter.controller === 'human') {
             onPlayerKill(b.shooter, u, b);
           } else if (b.shooter && b.shooter.team === 'blue' && u.team === 'red') {
