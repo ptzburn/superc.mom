@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>Brrawl Stars</title>
+<script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.3/dist/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pixi-filters@5.5.0/dist/browser/pixi-filters.min.js"></script>
 <style>
   :root {
     --gold: #ffd54f;
@@ -346,6 +348,91 @@ async function startEdit() {
   if (editPending) showFinalOverlay(editPending.msg, editPending.win);
 }
 
+// PIXI scene state, only alive during the edit phase.
+let pixiApp = null;
+let pixiVideoTex = null;
+let pixiSprite = null;
+let pixiFilters = null;
+
+function setupPixiForEdit(video) {
+  if (typeof PIXI === 'undefined') return false;
+  try {
+    pixiApp = new PIXI.Application({
+      width: W, height: H,
+      backgroundColor: 0x000000,
+      antialias: false,
+      autoStart: false
+    });
+  } catch (_) { pixiApp = null; return false; }
+
+  pixiVideoTex = PIXI.Texture.from(video);
+  pixiSprite = new PIXI.Sprite(pixiVideoTex);
+  pixiSprite.width = W;
+  pixiSprite.height = H;
+  pixiApp.stage.addChild(pixiSprite);
+
+  const F = (PIXI && PIXI.filters) || {};
+  pixiFilters = {
+    bloom:    F.AdvancedBloomFilter ? new F.AdvancedBloomFilter({ threshold: 0.5, bloomScale: 0.9, blur: 6 }) : null,
+    rgbSplit: F.RGBSplitFilter      ? new F.RGBSplitFilter([6, 0], [0, 0], [-6, 0])                          : null,
+    glitch:   F.GlitchFilter        ? new F.GlitchFilter({ slices: 8, offset: 0 })                            : null,
+    crt:      F.CRTFilter           ? new F.CRTFilter({ curvature: 1.4, lineWidth: 0.5, lineContrast: 0.16, vignetting: 0.32, vignettingAlpha: 0.6, noise: 0.12, noiseSize: 1.2, time: 0 }) : null,
+    zoom:     F.ZoomBlurFilter      ? new F.ZoomBlurFilter({ strength: 0, center: [W/2, H/2], innerRadius: 60, radius: -1 }) : null
+  };
+  const stack = [];
+  if (pixiFilters.bloom)    stack.push(pixiFilters.bloom);
+  if (pixiFilters.rgbSplit) stack.push(pixiFilters.rgbSplit);
+  if (pixiFilters.glitch)   stack.push(pixiFilters.glitch);
+  if (pixiFilters.crt)      stack.push(pixiFilters.crt);
+  if (pixiFilters.zoom)     stack.push(pixiFilters.zoom);
+  pixiSprite.filters = stack;
+  return true;
+}
+
+function teardownPixi() {
+  if (pixiApp) {
+    try { pixiApp.destroy(true, { children: true, texture: false, baseTexture: false }); } catch (_) {}
+  }
+  pixiApp = null;
+  pixiVideoTex = null;
+  pixiSprite = null;
+  pixiFilters = null;
+}
+
+function updatePixiFilters(beatPulse, intensity) {
+  if (!pixiFilters) return;
+  const K = intensity || 1;
+  if (pixiFilters.rgbSplit) {
+    const split = (4 + beatPulse * 16) * K;
+    pixiFilters.rgbSplit.red  = [ split, 0];
+    pixiFilters.rgbSplit.blue = [-split, 0];
+  }
+  if (pixiFilters.glitch) {
+    pixiFilters.glitch.offset = (Math.random() * 2 - 1) * (3 + beatPulse * 25) * K;
+    pixiFilters.glitch.slices = 4 + Math.floor(beatPulse * 14 * K);
+    try { pixiFilters.glitch.refresh(); } catch (_) {}
+  }
+  if (pixiFilters.zoom)  pixiFilters.zoom.strength    = beatPulse * 0.18 * K;
+  if (pixiFilters.crt) {
+    pixiFilters.crt.time += 0.5 + beatPulse * 1.5;
+    pixiFilters.crt.seed  = Math.random();
+  }
+  if (pixiFilters.bloom) pixiFilters.bloom.bloomScale = 0.7 + beatPulse * 1.6 * K;
+}
+
+function pixiRenderToCtx(transformFn) {
+  if (!pixiApp) return false;
+  if (pixiVideoTex && pixiVideoTex.baseTexture && pixiVideoTex.baseTexture.update) {
+    try { pixiVideoTex.baseTexture.update(); } catch (_) {}
+  }
+  try { pixiApp.renderer.render(pixiApp.stage); } catch (_) { return false; }
+  ctx.save();
+  if (transformFn) transformFn();
+  ctx.drawImage(pixiApp.view, 0, 0);
+  ctx.restore();
+  return true;
+}
+
 async function runEditSequence() {
   const video = document.createElement('video');
   video.src = URL.createObjectURL(recordedMatchBlob);
@@ -359,15 +446,18 @@ async function runEditSequence() {
     setTimeout(finish, 2500);
   });
 
+  setupPixiForEdit(video);
+
   await runEditCard('intro', 1900);
 
   for (let i = 0; i < killTimes.length; i++) {
     await runVideoShot(video, killTimes[i], i, killTimes.length);
-    await runFlashTransition(140);
+    if (i < killTimes.length - 1) await runImpactTransition(220);
   }
 
-  await runEditCard('outro', 1900);
+  await runEditCard('outro', 2100);
 
+  teardownPixi();
   try { URL.revokeObjectURL(video.src); } catch (_) {}
 }
 
@@ -392,7 +482,7 @@ async function runEditCard(kind, durMs) {
 
 async function runVideoShot(video, meta, idx, total) {
   const tSec = meta.time / 1000;
-  const seekTo = Math.max(0, Math.min(video.duration - 0.5, tSec - 1.0));
+  const seekTo = Math.max(0, Math.min(video.duration - 0.5, tSec - 1.4));
   video.currentTime = seekTo;
   await new Promise(resolve => {
     let done = false;
@@ -400,22 +490,32 @@ async function runVideoShot(video, meta, idx, total) {
     video.addEventListener('seeked', cb);
     setTimeout(cb, 1200);
   });
-  video.playbackRate = 0.65;       // slo-mo
-  try { await video.play(); } catch (_) {}
 
-  const durMs = 2600;
+  // Phase 1: slow-mo build-up (~1.5s wall, 0.45x footage)
+  video.playbackRate = 0.45;
+  try { await video.play(); } catch (_) {}
+  await runShotPhase('buildup', video, meta, idx, total, 1500);
+  try { video.pause(); } catch (_) {}
+
+  // Phase 2: freeze-frame impact (~520ms) — shockwave + flash + emoji burst
+  await runShotPhase('impact', video, meta, idx, total, 520);
+
+  // Phase 3: fast aftermath (~700ms, 1.2x footage)
+  video.playbackRate = 1.2;
+  try { await video.play(); } catch (_) {}
+  await runShotPhase('aftermath', video, meta, idx, total, 700);
+  try { video.pause(); } catch (_) {}
+}
+
+function runShotPhase(phase, video, meta, idx, total, durMs) {
   const startWall = performance.now();
   return new Promise(resolve => {
     function frame() {
       const elapsed = performance.now() - startWall;
-      if (elapsed >= durMs) {
-        try { video.pause(); } catch (_) {}
-        resolve();
-        return;
-      }
+      if (elapsed >= durMs) { resolve(); return; }
       const t01 = elapsed / durMs;
       const beatPulse = computeBeatPulse();
-      drawVideoShot(video, meta, t01, beatPulse, idx, total);
+      drawShotFrame(phase, video, meta, t01, beatPulse, idx, total);
       drawEditChrome(beatPulse);
       requestAnimationFrame(frame);
     }
@@ -423,57 +523,73 @@ async function runVideoShot(video, meta, idx, total) {
   });
 }
 
-async function runFlashTransition(durMs) {
+async function runImpactTransition(durMs) {
   const startWall = performance.now();
   return new Promise(resolve => {
     function frame() {
       const elapsed = performance.now() - startWall;
       if (elapsed >= durMs) { resolve(); return; }
-      const k = elapsed / durMs;
-      ctx.fillStyle = `rgba(255,255,255,${1 - k})`;
+      const t01 = elapsed / durMs;
+      // Three-phase flash: white → black → ramp
+      let bgAlpha;
+      if (t01 < 0.25) { ctx.fillStyle = `rgba(255,255,255,${1 - t01 / 0.25})`; }
+      else if (t01 < 0.6) { ctx.fillStyle = `rgba(0,0,0,${(t01 - 0.25) / 0.35})`; }
+      else { ctx.fillStyle = `rgba(0,0,0,${1 - (t01 - 0.6) / 0.4})`; }
       ctx.fillRect(0, 0, W, H);
+      // Quick rgb noise blocks
+      if (t01 < 0.55) {
+        for (let i = 0; i < 60; i++) {
+          ctx.fillStyle = `rgba(${(Math.random()*255)|0},${(Math.random()*255)|0},${(Math.random()*255)|0},${0.3 + Math.random()*0.5})`;
+          ctx.fillRect(Math.random() * W, Math.random() * H, Math.random() * 40, Math.random() * 16);
+        }
+      }
       requestAnimationFrame(frame);
     }
     frame();
   });
 }
 
-function computeBeatPulse() {
-  const beatMs = 60000 / 142;
-  const phase = (performance.now() % beatMs) / beatMs;
-  return Math.pow(1 - phase, 2);
-}
-
-function drawVideoShot(video, meta, t01, beatPulse, idx, total) {
-  // Black backdrop
+function drawShotFrame(phase, video, meta, t01, beatPulse, idx, total) {
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
 
-  const ready = video.readyState >= 2 && video.videoWidth > 0;
-
-  // Camera shake on beat
-  const shakeMag = beatPulse * 6;
-  const shx = (Math.random() - 0.5) * shakeMag;
-  const shy = (Math.random() - 0.5) * shakeMag;
-  // Slow zoom across shot, with beat punch
-  const baseZoom = 1.05 + t01 * 0.18;
-  const zoom = baseZoom * (1 + beatPulse * 0.05);
-
-  ctx.save();
-  ctx.translate(W/2 + shx, H/2 + shy);
-  ctx.scale(zoom, zoom);
-  ctx.translate(-W/2, -H/2);
-
-  // Saturation/contrast bump on the live footage
-  if (ready) {
-    ctx.filter = 'saturate(1.5) contrast(1.25) brightness(1.05)';
-    ctx.drawImage(video, 0, 0, W, H);
-    ctx.filter = 'none';
+  let shakeMag, zoom, intensity;
+  if (phase === 'buildup') {
+    shakeMag = beatPulse * 4;
+    zoom = 1.02 + t01 * 0.18;
+    intensity = 0.4 + t01 * 0.5;
+  } else if (phase === 'impact') {
+    const k = 1 - t01;
+    shakeMag = 18 * k;
+    zoom = 1.20 + Math.sin(t01 * Math.PI) * 0.06;
+    intensity = 1.6 * k + 0.3;
+  } else { // aftermath
+    shakeMag = beatPulse * 3;
+    zoom = 1.12 - t01 * 0.06;
+    intensity = 0.6;
   }
 
-  // Chromatic aberration — red shifted left, cyan shifted right, additive
-  if (ready) {
-    const split = 6 + beatPulse * 10;
+  const shx = (Math.random() - 0.5) * shakeMag;
+  const shy = (Math.random() - 0.5) * shakeMag;
+
+  updatePixiFilters(beatPulse, intensity);
+
+  const pxOk = pixiRenderToCtx(() => {
+    ctx.translate(W/2 + shx, H/2 + shy);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-W/2, -H/2);
+  });
+
+  if (!pxOk && video.readyState >= 2 && video.videoWidth > 0) {
+    // Fallback: 2D-only path
+    ctx.save();
+    ctx.translate(W/2 + shx, H/2 + shy);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-W/2, -H/2);
+    ctx.filter = 'saturate(1.55) contrast(1.28) brightness(1.05)';
+    ctx.drawImage(video, 0, 0, W, H);
+    ctx.filter = 'none';
+    const split = 6 + beatPulse * 12;
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.42;
     ctx.filter = 'sepia(1) saturate(8) hue-rotate(-50deg)';
@@ -483,45 +599,196 @@ function drawVideoShot(video, meta, t01, beatPulse, idx, total) {
     ctx.filter = 'none';
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
   }
 
-  // Speed lines streaking down
-  ctx.strokeStyle = `rgba(255,255,255,${0.06 + beatPulse * 0.18})`;
-  ctx.lineWidth = 2;
-  for (let i = 0; i < 14; i++) {
-    const sy = (i * 47 + (performance.now() / 4)) % H;
-    ctx.beginPath();
-    ctx.moveTo(-20, sy);
-    ctx.lineTo(W + 20, sy + (Math.random() - 0.5) * 4);
-    ctx.stroke();
+  if (phase === 'impact') {
+    drawShockwave(t01, meta.color);
+    drawSpeedLines(t01);
+    drawEmojiBurst(t01, meta);
+    const flashAlpha = (1 - t01) * 0.6;
+    ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+  } else if (phase === 'buildup' && t01 > 0.6) {
+    drawSpeedLines((t01 - 0.6) / 0.4 * 0.5);
   }
 
-  ctx.restore();
+  drawKineticHype(meta.caption, meta.color, phase, t01, beatPulse);
 
-  // Occasional glitch slice
-  if (ready && Math.random() < 0.06) {
-    const sliceY = Math.random() * H;
-    const sliceH = 12 + Math.random() * 18;
-    const vh = video.videoHeight;
-    ctx.drawImage(
-      video,
-      0, sliceY * vh / H,
-      video.videoWidth, sliceH * vh / H,
-      (Math.random() - 0.5) * 30, sliceY,
-      W, sliceH
-    );
-  }
-
-  // Big text caption
-  drawHypeText(meta.caption, meta.color, t01, beatPulse);
-
-  // Shot indicator pill
   ctx.font = 'bold 12px monospace';
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(W - 96, H - 36, 80, 22);
   ctx.fillStyle = '#fff';
   ctx.fillText(`SHOT ${idx + 1}/${total}`, W - 88, H - 21);
+}
+
+function drawShockwave(t01, color) {
+  const cx = W/2, cy = H/2;
+  for (let i = 0; i < 3; i++) {
+    const offset = i * 0.14;
+    const rt = t01 - offset;
+    if (rt <= 0 || rt > 1) continue;
+    const radius = rt * 380;
+    const alpha = (1 - rt) * 0.7;
+    ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.lineWidth = 8 - i * 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = alpha * 0.7;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(0, radius - 6), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawSpeedLines(t01) {
+  const cx = W/2, cy = H/2;
+  const count = 26;
+  ctx.strokeStyle = `rgba(255, 255, 255, ${0.55 * (1 - t01)})`;
+  ctx.lineWidth = 3;
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 + t01 * 0.6;
+    const r1 = 110 + t01 * 220;
+    const r2 = r1 + 70 + Math.random() * 40;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(angle) * r1, cy + Math.sin(angle) * r1);
+    ctx.lineTo(cx + Math.cos(angle) * r2, cy + Math.sin(angle) * r2);
+    ctx.stroke();
+  }
+}
+
+const SHOT_EMOJIS = {
+  triple:     ['💀', '🔥', '💥', '⚡'],
+  double:     ['💥', '🔥', '💪'],
+  victory:    ['👑', '🏆', '⭐', '💯'],
+  clutch:     ['😱', '🫣', '💜', '🔥'],
+  longshot:   ['🎯', '⚡', '💨'],
+  firstblood: ['🩸', '💀', '⚔️'],
+  kill:       ['💥', '🔥', '💀', '⚡', '💯'],
+  ally:       ['🤝', '💙', '⚡'],
+  rip:        ['💔', '🪦', '😢']
+};
+
+function classifyCaption(cap) {
+  const c = cap || '';
+  if (/TRIPLE|WIPE|CLEANED|NUKE/i.test(c))            return 'triple';
+  if (/DOUBLE|TWO|BACK TO BACK/i.test(c))             return 'double';
+  if (/VICTORY|GAME OVER|DUB|WRAP/i.test(c))          return 'victory';
+  if (/CLUTCH|1HP|BARELY|INSANE/i.test(c))            return 'clutch';
+  if (/LONG|ACROSS|NO[- ]SCOPE|CROSS/i.test(c))       return 'longshot';
+  if (/FIRST|OPENING|STARTED|1ST/i.test(c))           return 'firstblood';
+  if (/RIP|F IN CHAT|DOWN|LOST/i.test(c))             return 'rip';
+  if (/ALLY|BLUE|TEAM|EATIN/i.test(c))                return 'ally';
+  return 'kill';
+}
+
+function drawEmojiBurst(t01, meta) {
+  const category = classifyCaption(meta.caption);
+  const emojis = SHOT_EMOJIS[category] || SHOT_EMOJIS.kill;
+  const cx = W/2, cy = H/2;
+  const seed = (meta.time | 0);
+  for (let i = 0; i < 7; i++) {
+    const angle = ((seed + i * 137) % 360) * Math.PI / 180;
+    const distance = 60 + t01 * 280;
+    const x = cx + Math.cos(angle) * distance;
+    const y = cy + Math.sin(angle) * distance + Math.sin(t01 * Math.PI * 3 + i) * 18;
+    const popK = Math.min(1, t01 * 4);
+    const scale = 0.4 + popK * 0.8 + Math.sin(t01 * Math.PI) * 0.25;
+    const alpha = 1 - Math.pow(t01, 2);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    ctx.scale(scale, scale);
+    ctx.font = 'bold 56px system-ui, "Apple Color Emoji", "Segoe UI Emoji"';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(emojis[i % emojis.length], 0, 0);
+    ctx.restore();
+  }
+}
+
+function drawKineticHype(text, color, phase, t01, beatPulse) {
+  const parts = parseAccents(text);
+  const flat = [];
+  for (const p of parts) for (const ch of p.text) flat.push({ char: ch, accent: p.accent });
+  if (flat.length === 0) return;
+
+  let fontSize = 88;
+  ctx.font = `900 ${fontSize}px "Trebuchet MS", system-ui, sans-serif`;
+  let widths = flat.map(c => ctx.measureText(c.char).width);
+  let total = widths.reduce((a, b) => a + b, 0);
+  const maxW = W * 0.92;
+  if (total > maxW) {
+    fontSize = Math.max(36, Math.floor(fontSize * maxW / total));
+    ctx.font = `900 ${fontSize}px "Trebuchet MS", system-ui, sans-serif`;
+    widths = flat.map(c => ctx.measureText(c.char).width);
+    total = widths.reduce((a, b) => a + b, 0);
+  }
+
+  ctx.save();
+  ctx.translate(W/2, H * 0.32);
+  ctx.rotate(-0.04);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  let cursor = -total / 2;
+  for (let i = 0; i < flat.length; i++) {
+    const ch = flat[i];
+    const charCx = cursor + widths[i] / 2;
+    let scale, dy, alpha;
+    if (phase === 'impact') {
+      const charDelay = (i / flat.length) * 0.45;
+      const k = Math.max(0, Math.min(1, (t01 - charDelay) / 0.28));
+      // ease-out-back
+      const c1 = 1.70158, c3 = c1 + 1;
+      const eob = 1 + c3 * Math.pow(k - 1, 3) + c1 * Math.pow(k - 1, 2);
+      scale = 0.2 + eob * (0.95 + beatPulse * 0.08);
+      alpha = Math.min(1, k * 2.4);
+      dy = (1 - k) * -28;
+    } else if (phase === 'buildup') {
+      const k = Math.min(1, t01 / 0.4);
+      scale = (0.5 + k * 0.5) * (1 + beatPulse * 0.05);
+      alpha = k;
+      dy = (1 - k) * 12;
+    } else { // aftermath
+      const fade = Math.max(0, 1 - Math.max(0, t01 - 0.6) / 0.4);
+      scale = 1.05 * (1 + beatPulse * 0.04);
+      alpha = fade;
+      dy = 0;
+    }
+
+    ctx.save();
+    ctx.translate(charCx, dy);
+    ctx.scale(scale, scale);
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = Math.max(8, fontSize * 0.13);
+    ctx.strokeStyle = '#0d0d1a';
+    ctx.strokeText(ch.char, 0, 0);
+    if (ch.accent) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 24 + beatPulse * 18;
+      ctx.fillStyle = color;
+    } else {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff';
+    }
+    ctx.fillText(ch.char, 0, 0);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+    cursor += widths[i];
+  }
+  ctx.restore();
+}
+
+function computeBeatPulse() {
+  const beatMs = 60000 / 142;
+  const phase = (performance.now() % beatMs) / beatMs;
+  return Math.pow(1 - phase, 2);
 }
 
 function drawEditChrome(beatPulse) {
