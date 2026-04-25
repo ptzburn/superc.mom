@@ -6,8 +6,8 @@ import { createSfxEngine, type SfxEngine } from "./sfx";
 
 const ARENA_W = 960;
 const ARENA_H = 600;
-const PLAYER_RADIUS = 16;
-const ALLY_RADIUS = 15;
+const PLAYER_RADIUS = 24;
+const ALLY_RADIUS = 22;
 const PLAYER_SPEED = 250;
 const ALLY_SPEED = 220;
 const PLAYER_FIRE_RATE = 0.18;
@@ -22,6 +22,10 @@ const ALLY_BULLET_DAMAGE = 7;
 const PLAYER_MAX_HP = 100;
 const ALLY_MAX_HP = 70;
 const WAVE_BREAK_SECONDS = 2;
+
+/** Canvas + overlay typography (Brawl-style chunky UI; matches game/layout Fredoka) */
+const BR_FONT =
+	"800 52px ui-rounded, 'Fredoka', 'Segoe UI Rounded', 'Arial Rounded MT Bold', 'Helvetica Rounded', sans-serif";
 
 type Vec = { x: number; y: number };
 
@@ -57,8 +61,12 @@ type Ally = {
 	alive: boolean;
 	respawnTimer: number;
 	followOffset: Vec;
-	uniform: string;
-	headband: string;
+	/** Elephant hide (dark / light gray) */
+	armor: string;
+	armorHighlight: string;
+	/** Cap red + white panel; also used for ear pink/tusk hi */
+	cape: string;
+	capeInner: string;
 	hitFlash: number;
 };
 
@@ -123,6 +131,129 @@ type GameRuntime = {
 
 function clamp(n: number, min: number, max: number) {
 	return Math.min(Math.max(n, min), max);
+}
+
+/** Lighter on top/forward, darker on bottom — reads as 3D on an ellipse (top-down). */
+function createBlobGradient(
+	ctx: CanvasRenderingContext2D,
+	ox: number,
+	oy: number,
+	rx: number,
+	ry: number,
+	light: string,
+	mid: string,
+	dark: string,
+) {
+	const g = ctx.createRadialGradient(
+		ox - rx * 0.4,
+		oy - ry * 0.5,
+		Math.min(rx, ry) * 0.08,
+		ox,
+		oy,
+		Math.max(rx, ry) * 1.05,
+	);
+	g.addColorStop(0, light);
+	g.addColorStop(0.5, mid);
+	g.addColorStop(1, dark);
+	return g;
+}
+
+/** Brawl-style thick ink outline (cel / toy look) */
+const BRAWL_OUT = "#0f1a2c";
+const BRAWL_OUTW = 2.6;
+const BRAWL_OUT_SOFT = 1.5;
+
+/** Top-down polymer handgun: barrel along +x from origin. `L` = overall length. */
+function drawHandgunTopDown(ctx: CanvasRenderingContext2D, L: number) {
+	const sw = L * 0.14;
+	const s0 = L * 0.08;
+	const s1 = L * 0.66;
+	// slide (stainless)
+	const mGrad = ctx.createLinearGradient(0, -sw, 0, sw);
+	mGrad.addColorStop(0, "#d0d8e0");
+	mGrad.addColorStop(0.35, "#7a8694");
+	mGrad.addColorStop(0.7, "#3a4048");
+	mGrad.addColorStop(1, "#101418");
+	ctx.beginPath();
+	ctx.roundRect(s0, -sw, s1 - s0, sw * 2, L * 0.025);
+	ctx.fillStyle = mGrad;
+	ctx.fill();
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = 0.85;
+	ctx.stroke();
+	// ejection / slide lines
+	for (let i = 0; i < 3; i++) {
+		const x = s0 + 4 + i * 3.5;
+		ctx.beginPath();
+		ctx.moveTo(x, -sw * 0.55);
+		ctx.lineTo(x + 0.6, -sw * 0.15);
+		ctx.strokeStyle = "rgba(0,0,0,0.28)";
+		ctx.lineWidth = 0.4;
+		ctx.stroke();
+	}
+	// muzzle
+	ctx.beginPath();
+	ctx.ellipse(s1, 0, L * 0.04, sw * 0.55, 0, 0, Math.PI * 2);
+	const mug = ctx.createRadialGradient(s1, 0, 0, s1, 0, L * 0.05);
+	mug.addColorStop(0, "#2a2a2a");
+	mug.addColorStop(0.5, "#0a0a0a");
+	mug.addColorStop(1, "#000000");
+	ctx.fillStyle = mug;
+	ctx.fill();
+	ctx.beginPath();
+	ctx.arc(s1 + L * 0.03, 0, L * 0.018, 0, Math.PI * 2);
+	ctx.fillStyle = "rgba(0,0,0,0.75)";
+	ctx.fill();
+	// front sight
+	ctx.fillStyle = "#0a0a0a";
+	ctx.fillRect(s1 - 0.3, -sw * 0.85, 1, sw * 0.4);
+	// frame
+	ctx.beginPath();
+	ctx.moveTo(s0, sw);
+	ctx.lineTo(s0 - L * 0.12, L * 0.2);
+	ctx.lineTo(s0 - L * 0.04, L * 0.32);
+	ctx.lineTo(s0 + L * 0.2, L * 0.12);
+	ctx.closePath();
+	const fgrad = ctx.createLinearGradient(0, 0, 0, L * 0.3);
+	fgrad.addColorStop(0, "#3a3d42");
+	fgrad.addColorStop(1, "#0c0d10");
+	ctx.fillStyle = fgrad;
+	ctx.fill();
+	ctx.stroke();
+	// trigger guard
+	ctx.beginPath();
+	ctx.arc(s0 + L * 0.3, L * 0.1, L * 0.1, 0, Math.PI);
+	ctx.strokeStyle = "rgba(0,0,0,0.5)";
+	ctx.lineWidth = 0.6;
+	ctx.stroke();
+	// trigger
+	ctx.beginPath();
+	ctx.moveTo(s0 + L * 0.3, L * 0.12);
+	ctx.quadraticCurveTo(s0 + L * 0.22, L * 0.16, s0 + L * 0.2, L * 0.1);
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = 0.5;
+	ctx.stroke();
+	// grip
+	ctx.beginPath();
+	ctx.roundRect(s0 - L * 0.2, L * 0.1, L * 0.2, L * 0.2, 2);
+	const gg = ctx.createLinearGradient(0, L * 0.1, 0, L * 0.32);
+	gg.addColorStop(0, "#181818");
+	gg.addColorStop(1, "#050505");
+	ctx.fillStyle = gg;
+	ctx.fill();
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = 0.7;
+	ctx.stroke();
+	// mag base plate
+	ctx.fillStyle = "#2a2a2a";
+	ctx.fillRect(s0 - L * 0.12, L * 0.24, L * 0.1, 1.2);
+	// under-rail / accessory hint
+	ctx.strokeStyle = "rgba(255,255,255,0.15)";
+	ctx.lineWidth = 0.3;
+	ctx.beginPath();
+	ctx.moveTo(s0 + L * 0.1, sw);
+	ctx.lineTo(s0 + L * 0.45, sw);
+	ctx.stroke();
 }
 
 function rand(min: number, max: number) {
@@ -275,6 +406,7 @@ function bulletHitsObstacle(pos: Vec, obstacles: Obstacle[]) {
 	return false;
 }
 
+/** Elephant hide + cap tints (armor = dark gray, highlight = flanks) */
 function createSquad(): Ally[] {
 	return [
 		{
@@ -286,8 +418,10 @@ function createSquad(): Ally[] {
 			alive: true,
 			respawnTimer: 0,
 			followOffset: { x: -55, y: 35 },
-			uniform: "#3a6a3d",
-			headband: "#e94545",
+			armor: "#3a3d44",
+			armorHighlight: "#6a6f78",
+			cape: "#d82020",
+			capeInner: "#f0f0f0",
 			hitFlash: 0,
 		},
 		{
@@ -299,8 +433,10 @@ function createSquad(): Ally[] {
 			alive: true,
 			respawnTimer: 0,
 			followOffset: { x: 55, y: 35 },
-			uniform: "#436b30",
-			headband: "#f1f1f1",
+			armor: "#2a2e34",
+			armorHighlight: "#5a5e68",
+			cape: "#c01818",
+			capeInner: "#faf8f2",
 			hitFlash: 0,
 		},
 		{
@@ -312,12 +448,24 @@ function createSquad(): Ally[] {
 			alive: true,
 			respawnTimer: 0,
 			followOffset: { x: 0, y: 60 },
-			uniform: "#2f5f3a",
-			headband: "#1a1a1a",
+			armor: "#333840",
+			armorHighlight: "#5c6470",
+			cape: "#e03028",
+			capeInner: "#ffffff",
 			hitFlash: 0,
 		},
 	];
 }
+
+const PLAYER_GOP_SKIN: Pick<
+	Ally,
+	"armor" | "armorHighlight" | "cape" | "capeInner"
+> = {
+	armor: "#3a3d44",
+	armorHighlight: "#6a6f78",
+	cape: "#d82020",
+	capeInner: "#f0f0f0",
+};
 
 function createInitialState(): GameRuntime {
 	return {
@@ -379,20 +527,20 @@ function spawnZombie(s: GameRuntime) {
 	let type: ZombieType = "walker";
 	let hp = 30 + wave * 6;
 	let speed = 75 + wave * 3.5;
-	let radius = 14;
+	let radius = 21;
 	let damage = 14;
 	const r = Math.random();
 	if (wave >= 3 && r < 0.26) {
 		type = "runner";
 		hp = 18 + wave * 3;
 		speed = 145 + wave * 4;
-		radius = 11;
+		radius = 16;
 		damage = 9;
 	} else if (wave >= 2 && r < 0.38) {
 		type = "brute";
 		hp = 110 + wave * 18;
 		speed = 48 + wave * 1.4;
-		radius = 22;
+		radius = 32;
 		damage = 24;
 	}
 
@@ -820,11 +968,11 @@ function render(ctx: CanvasRenderingContext2D, s: GameRuntime) {
 	for (const p of s.particles) drawParticle(ctx, p);
 
 	for (const z of s.zombies) {
-		drawHpBar(ctx, z.pos, z.hp, z.maxHp, z.radius + 8, 28, 4, "#e25b5b");
+		drawHpBar(ctx, z.pos, z.hp, z.maxHp, z.radius + 8, 28, 4, "#ff4058");
 	}
 	for (const a of s.allies) {
 		if (a.alive && a.hp < a.maxHp) {
-			drawHpBar(ctx, a.pos, a.hp, a.maxHp, ALLY_RADIUS + 12, 28, 4, "#7be37b");
+			drawHpBar(ctx, a.pos, a.hp, a.maxHp, ALLY_RADIUS + 12, 28, 4, "#00e868");
 		}
 	}
 
@@ -848,166 +996,410 @@ function render(ctx: CanvasRenderingContext2D, s: GameRuntime) {
 function drawObstacle(ctx: CanvasRenderingContext2D, o: Obstacle) {
 	ctx.save();
 	if (o.kind === "barrel") {
+		// Brawl TNT-style barrel
 		ctx.beginPath();
-		ctx.ellipse(o.x, o.y + o.r * 0.6, o.r * 0.95, o.r * 0.4, 0, 0, Math.PI * 2);
-		ctx.fillStyle = "rgba(0,0,0,0.4)";
+		ctx.ellipse(
+			o.x,
+			o.y + o.r * 0.55,
+			o.r * 0.95,
+			o.r * 0.38,
+			0,
+			0,
+			Math.PI * 2,
+		);
+		ctx.fillStyle = "rgba(0,0,0,0.28)";
 		ctx.fill();
+		const bg = ctx.createRadialGradient(
+			o.x - o.r * 0.25,
+			o.y - o.r * 0.2,
+			0,
+			o.x,
+			o.y,
+			o.r,
+		);
+		bg.addColorStop(0, "#e86850");
+		bg.addColorStop(0.45, "#c84030");
+		bg.addColorStop(1, "#781018");
 		ctx.beginPath();
 		ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2);
-		ctx.fillStyle = "#5a3a1f";
+		ctx.fillStyle = bg;
 		ctx.fill();
-		ctx.strokeStyle = "rgba(0,0,0,0.55)";
-		ctx.lineWidth = 1.5;
+		ctx.strokeStyle = BRAWL_OUT;
+		ctx.lineWidth = BRAWL_OUTW;
 		ctx.stroke();
-		ctx.beginPath();
-		ctx.arc(o.x, o.y, o.r * 0.7, 0, Math.PI * 2);
-		ctx.strokeStyle = "#3a2410";
-		ctx.lineWidth = 2;
-		ctx.stroke();
-		ctx.beginPath();
-		ctx.arc(o.x, o.y, o.r * 0.3, 0, Math.PI * 2);
-		ctx.fillStyle = "#3a2410";
-		ctx.fill();
-	} else if (o.kind === "crate") {
-		ctx.fillStyle = "rgba(0,0,0,0.4)";
-		ctx.fillRect(o.x + 3, o.y + 5, o.w, o.h);
-		const grad = ctx.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
-		grad.addColorStop(0, "#8a6a3a");
-		grad.addColorStop(1, "#5e4422");
-		ctx.fillStyle = grad;
-		ctx.fillRect(o.x, o.y, o.w, o.h);
-		ctx.strokeStyle = "#2d1d0c";
-		ctx.lineWidth = 2;
-		ctx.strokeRect(o.x + 1, o.y + 1, o.w - 2, o.h - 2);
-		ctx.beginPath();
-		ctx.moveTo(o.x + 4, o.y + 4);
-		ctx.lineTo(o.x + o.w - 4, o.y + o.h - 4);
-		ctx.moveTo(o.x + o.w - 4, o.y + 4);
-		ctx.lineTo(o.x + 4, o.y + o.h - 4);
-		ctx.stroke();
-	} else {
-		ctx.fillStyle = "rgba(0,0,0,0.4)";
-		ctx.fillRect(o.x + 2, o.y + 5, o.w, o.h);
-		const grad = ctx.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
-		grad.addColorStop(0, "#a89868");
-		grad.addColorStop(1, "#6e5e36");
-		ctx.fillStyle = grad;
-		ctx.fillRect(o.x, o.y, o.w, o.h);
-		ctx.strokeStyle = "rgba(0,0,0,0.45)";
+		ctx.strokeStyle = "rgba(255,255,255,0.28)";
 		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.arc(o.x - o.r * 0.2, o.y - o.r * 0.2, o.r * 0.35, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.fillStyle = "#f0e8d8";
+		ctx.fillRect(o.x - o.r * 0.55, o.y - o.r * 0.12, o.r * 1.1, o.r * 0.24);
+		ctx.strokeStyle = BRAWL_OUT;
+		ctx.lineWidth = BRAWL_OUT_SOFT;
+		ctx.strokeRect(o.x - o.r * 0.55, o.y - o.r * 0.12, o.r * 1.1, o.r * 0.24);
+		ctx.fillStyle = "#1a1a1a";
+		ctx.font = `bold ${Math.max(8, o.r * 0.55)}px sans-serif`;
+		ctx.textAlign = "center";
+		ctx.textBaseline = "middle";
+		ctx.fillText("!", o.x, o.y + o.r * 0.02);
+	} else if (o.kind === "crate") {
+		ctx.fillStyle = "rgba(0,0,0,0.3)";
+		ctx.fillRect(o.x + 4, o.y + 6, o.w, o.h);
+		const g = ctx.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+		g.addColorStop(0, "#d4a86a");
+		g.addColorStop(0.5, "#9a6a35");
+		g.addColorStop(1, "#5a3a1a");
+		ctx.fillStyle = g;
+		ctx.fillRect(o.x, o.y, o.w, o.h);
+		ctx.strokeStyle = BRAWL_OUT;
+		ctx.lineWidth = BRAWL_OUTW;
+		ctx.strokeRect(o.x, o.y, o.w, o.h);
+		const plank = 10;
+		for (let py = o.y + plank; py < o.y + o.h - 2; py += plank) {
+			ctx.beginPath();
+			ctx.moveTo(o.x + 2, py);
+			ctx.lineTo(o.x + o.w - 2, py);
+			ctx.strokeStyle = "rgba(0,0,0,0.22)";
+			ctx.lineWidth = 1.2;
+			ctx.stroke();
+		}
+		ctx.strokeStyle = "rgba(255,255,255,0.2)";
+		ctx.beginPath();
+		ctx.moveTo(o.x + 3, o.y + 3);
+		ctx.lineTo(o.x + o.w - 3, o.y + o.h - 3);
+		ctx.stroke();
+		for (const [dx, dy] of [
+			[2, 2],
+			[o.w - 2, 2],
+		] as const) {
+			ctx.fillStyle = "#5a5a5a";
+			ctx.beginPath();
+			ctx.arc(o.x + dx, o.y + dy, 3, 0, Math.PI * 2);
+			ctx.fill();
+			ctx.strokeStyle = BRAWL_OUT;
+			ctx.lineWidth = 0.8;
+			ctx.stroke();
+		}
+	} else {
+		// Stone block wall (Brawl)
+		ctx.fillStyle = "rgba(0,0,0,0.3)";
+		ctx.fillRect(o.x + 2, o.y + 5, o.w, o.h);
+		const g2 = ctx.createLinearGradient(o.x, o.y, o.x, o.y + o.h);
+		g2.addColorStop(0, "#b8a898");
+		g2.addColorStop(0.4, "#8a7a6a");
+		g2.addColorStop(1, "#4a3a2c");
+		ctx.fillStyle = g2;
+		ctx.fillRect(o.x, o.y, o.w, o.h);
 		const isHoriz = o.w > o.h;
-		const segLen = 26;
-		const count = Math.max(2, Math.round((isHoriz ? o.w : o.h) / segLen));
+		const count = isHoriz
+			? Math.max(2, Math.round(o.w / 28))
+			: Math.max(2, Math.round(o.h / 28));
 		for (let i = 1; i < count; i++) {
 			ctx.beginPath();
 			if (isHoriz) {
 				const x = o.x + (o.w / count) * i;
-				ctx.moveTo(x, o.y);
-				ctx.lineTo(x, o.y + o.h);
+				ctx.moveTo(x, o.y + 1);
+				ctx.lineTo(x, o.y + o.h - 1);
 			} else {
 				const y = o.y + (o.h / count) * i;
-				ctx.moveTo(o.x, y);
-				ctx.lineTo(o.x + o.w, y);
+				ctx.moveTo(o.x + 1, y);
+				ctx.lineTo(o.x + o.w - 1, y);
 			}
+			ctx.strokeStyle = "rgba(0,0,0,0.2)";
+			ctx.lineWidth = 1.1;
 			ctx.stroke();
 		}
-		ctx.strokeStyle = "#3e3318";
-		ctx.lineWidth = 1.5;
-		ctx.strokeRect(o.x + 0.5, o.y + 0.5, o.w - 1, o.h - 1);
+		ctx.strokeStyle = BRAWL_OUT;
+		ctx.lineWidth = BRAWL_OUTW;
+		ctx.strokeRect(o.x, o.y, o.w, o.h);
 	}
 	ctx.restore();
 }
 
 function drawGround(ctx: CanvasRenderingContext2D) {
-	const grad = ctx.createRadialGradient(
-		ARENA_W / 2,
-		ARENA_H / 2,
-		100,
-		ARENA_W / 2,
-		ARENA_H / 2,
-		Math.max(ARENA_W, ARENA_H) * 0.7,
+	// Brawl: sunny grass field (lime → forest green)
+	const cx = ARENA_W / 2;
+	const cy = ARENA_H / 2;
+	const g = ctx.createRadialGradient(
+		cx * 0.9,
+		cy * 0.75,
+		40,
+		cx,
+		cy,
+		Math.max(ARENA_W, ARENA_H) * 0.72,
 	);
-	grad.addColorStop(0, "#23381f");
-	grad.addColorStop(1, "#0e1a0c");
-	ctx.fillStyle = grad;
+	g.addColorStop(0, "#9fe860");
+	g.addColorStop(0.35, "#6dd23e");
+	g.addColorStop(0.7, "#4ab028");
+	g.addColorStop(1, "#2d7818");
+	ctx.fillStyle = g;
 	ctx.fillRect(0, 0, ARENA_W, ARENA_H);
-	ctx.strokeStyle = "rgba(255,255,255,0.04)";
-	ctx.lineWidth = 1;
-	for (let x = 0; x < ARENA_W; x += 60) {
+	// Soft grass tufts (deterministic, no flicker)
+	for (let i = 0; i < 90; i++) {
+		const x = ((i * 127 + i * i * 0.1) | 0) % (ARENA_W - 24);
+		const y = ((i * 83 + 37) | 0) % (ARENA_H - 24);
+		const rad = 5 + (i % 6) * 2.2;
+		ctx.globalAlpha = 0.1 + (i % 5) * 0.04;
 		ctx.beginPath();
-		ctx.moveTo(x + 0.5, 0);
-		ctx.lineTo(x + 0.5, ARENA_H);
-		ctx.stroke();
+		ctx.arc(12 + x, 12 + y, rad, 0, Math.PI * 2);
+		ctx.fillStyle = i % 3 === 0 ? "#1a5a0c" : "#b8f070";
+		ctx.fill();
 	}
-	for (let y = 0; y < ARENA_H; y += 60) {
+	ctx.globalAlpha = 1;
+	// Dark “bush” patches (Brawl cover grass look)
+	for (let i = 0; i < 16; i++) {
+		const bx = 40 + ((i * 97) % (ARENA_W - 100));
+		const by = 30 + ((i * 71 + i * 7) % (ARENA_H - 80));
 		ctx.beginPath();
-		ctx.moveTo(0, y + 0.5);
-		ctx.lineTo(ARENA_W, y + 0.5);
-		ctx.stroke();
+		ctx.ellipse(bx, by, 22 + (i % 4) * 5, 16 + (i % 3) * 3, 0, 0, Math.PI * 2);
+		ctx.fillStyle = "rgba(25, 90, 18, 0.22)";
+		ctx.fill();
 	}
-	ctx.strokeStyle = "rgba(255, 70, 70, 0.55)";
-	ctx.lineWidth = 3;
-	ctx.strokeRect(1.5, 1.5, ARENA_W - 3, ARENA_H - 3);
+	// Subtle path / tile sheen
+	const step = 48;
+	for (let x = 0; x < ARENA_W; x += step) {
+		for (let y = 0; y < ARENA_H; y += step) {
+			const tx = x + 1;
+			const ty = y + 1;
+			ctx.beginPath();
+			ctx.moveTo(tx, ty);
+			ctx.lineTo(tx + step * 0.4, ty);
+			ctx.lineTo(tx + step * 0.2, ty + step * 0.4);
+			ctx.closePath();
+			ctx.fillStyle = "rgba(255,255,255,0.035)";
+			ctx.fill();
+		}
+	}
+	// Brawl gold arena rim
+	const rim = ctx.createLinearGradient(0, 0, ARENA_W, ARENA_H);
+	rim.addColorStop(0, "#fff6c8");
+	rim.addColorStop(0.3, "#f0c850");
+	rim.addColorStop(0.5, "#d8a020");
+	rim.addColorStop(0.7, "#f0c850");
+	rim.addColorStop(1, "#fff6c8");
+	ctx.strokeStyle = rim;
+	ctx.lineWidth = 7;
+	ctx.strokeRect(2, 2, ARENA_W - 4, ARENA_H - 4);
+	ctx.strokeStyle = "rgba(255,255,255,0.55)";
+	ctx.lineWidth = 1.2;
+	ctx.strokeRect(5, 5, ARENA_W - 10, ARENA_H - 10);
+	ctx.strokeStyle = "rgba(20, 50, 120, 0.35)";
+	ctx.lineWidth = 2;
+	ctx.strokeRect(9, 9, ARENA_W - 18, ARENA_H - 18);
 }
 
-function drawSoldier(
+/** Your team: **elephant** mascot + red/white cap (+x = facing). */
+function drawGOPBrawler(
 	ctx: CanvasRenderingContext2D,
 	pos: Vec,
 	angle: number,
-	uniform: string,
-	headband: string,
-	radius: number,
+	r: number,
+	bodyDark: string,
+	bodyLight: string,
+	capRed: string,
+	capPanel: string,
 	hitFlash: number,
 ) {
+	const earIn = `rgba(255,200,210,0.9)`;
 	ctx.save();
 	ctx.translate(pos.x, pos.y);
-	ctx.shadowColor = "rgba(0,0,0,0.5)";
-	ctx.shadowBlur = 6;
-	ctx.shadowOffsetY = 2;
+	const sh = ctx.createRadialGradient(0, r * 0.65, 0, 0, r * 0.75, r * 0.95);
+	sh.addColorStop(0, "rgba(20, 40, 80, 0.35)");
+	sh.addColorStop(1, "rgba(40, 100, 160, 0.06)");
 	ctx.beginPath();
-	ctx.ellipse(0, radius * 0.7, radius * 0.85, radius * 0.35, 0, 0, Math.PI * 2);
-	ctx.fillStyle = "rgba(0,0,0,0.35)";
+	ctx.ellipse(0, r * 0.7, r * 0.88, r * 0.34, 0, 0, Math.PI * 2);
+	ctx.fillStyle = sh;
 	ctx.fill();
-	ctx.shadowBlur = 0;
-	ctx.shadowOffsetY = 0;
 	ctx.rotate(angle);
-
-	// Rifle
-	ctx.fillStyle = "#1a1a1a";
-	ctx.fillRect(radius * 0.4, -2, radius * 1.5, 4);
-	ctx.fillStyle = "#3a3a3a";
-	ctx.fillRect(radius * 0.2, -3, radius * 0.4, 6);
-
-	// Body
+	const txW = r * 0.52;
+	const tyH = r * 0.48;
+	// Rounded body
 	ctx.beginPath();
-	ctx.arc(0, 0, radius, 0, Math.PI * 2);
-	ctx.fillStyle = uniform;
+	ctx.ellipse(0, 0, txW, tyH, 0, 0, Math.PI * 2);
+	ctx.fillStyle = createBlobGradient(
+		ctx,
+		0,
+		-tyH * 0.15,
+		txW,
+		tyH,
+		bodyLight,
+		bodyDark,
+		"rgba(0,0,0,0.45)",
+	);
 	ctx.fill();
-	ctx.strokeStyle = "rgba(0,0,0,0.4)";
-	ctx.lineWidth = 1.5;
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = BRAWL_OUTW;
 	ctx.stroke();
-
-	// Vest detail
-	ctx.fillStyle = "rgba(0,0,0,0.25)";
-	ctx.fillRect(-radius * 0.7, -radius * 0.5, radius * 0.9, radius);
-
-	// Headband (around upper part of head)
-	ctx.beginPath();
-	ctx.arc(0, 0, radius * 0.55, -Math.PI * 0.85, -Math.PI * 0.15, false);
-	ctx.lineWidth = 3;
-	ctx.strokeStyle = headband;
-	ctx.stroke();
-
-	// Helmet/face accent
-	ctx.beginPath();
-	ctx.arc(radius * 0.15, 0, radius * 0.45, 0, Math.PI * 2);
-	ctx.fillStyle = "#ddc59a";
-	ctx.fill();
-
-	if (hitFlash > 0) {
-		ctx.globalAlpha = clamp(hitFlash / 0.15, 0, 1) * 0.65;
+	// Four stumpy feet
+	for (const dx of [-0.32, 0.22] as const) {
+		for (const sy of [-1, 1] as const) {
+			ctx.beginPath();
+			ctx.ellipse(
+				dx * r,
+				sy * (tyH * 0.75),
+				r * 0.12,
+				r * 0.16,
+				0,
+				0,
+				Math.PI * 2,
+			);
+			const fg = createBlobGradient(
+				ctx,
+				dx * r,
+				sy * (tyH * 0.75),
+				r * 0.12,
+				r * 0.16,
+				"#4a4a4a",
+				"#1a1a1a",
+				"rgba(0,0,0,0.5)",
+			);
+			ctx.fillStyle = fg;
+			ctx.fill();
+			ctx.strokeStyle = BRAWL_OUT;
+			ctx.lineWidth = 0.7;
+			ctx.stroke();
+		}
+	}
+	// Cranium + ears
+	const hx = r * 0.38;
+	const hy = 0.02 * r;
+	for (const sign of [-1, 1] as const) {
 		ctx.beginPath();
-		ctx.arc(0, 0, radius, 0, Math.PI * 2);
+		ctx.ellipse(
+			hx * 0.4,
+			sign * (r * 0.4),
+			r * 0.2,
+			r * 0.32,
+			sign * 0.1,
+			0,
+			Math.PI * 2,
+		);
+		ctx.fillStyle = createBlobGradient(
+			ctx,
+			hx * 0.4,
+			sign * (r * 0.4),
+			r * 0.2,
+			r * 0.32,
+			bodyLight,
+			bodyDark,
+			"rgba(0,0,0,0.35)",
+		);
+		ctx.fill();
+		ctx.strokeStyle = BRAWL_OUT;
+		ctx.lineWidth = 1;
+		ctx.stroke();
+		ctx.beginPath();
+		ctx.ellipse(
+			hx * 0.38,
+			sign * (r * 0.38),
+			r * 0.1,
+			r * 0.18,
+			sign * 0.12,
+			0,
+			Math.PI * 2,
+		);
+		ctx.fillStyle = earIn;
+		ctx.fill();
+	}
+	ctx.beginPath();
+	ctx.ellipse(hx, hy, r * 0.22, r * 0.2, 0, 0, Math.PI * 2);
+	ctx.fillStyle = createBlobGradient(
+		ctx,
+		hx,
+		hy - r * 0.1,
+		r * 0.22,
+		r * 0.2,
+		bodyLight,
+		bodyDark,
+		"rgba(0,0,0,0.25)",
+	);
+	ctx.fill();
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = BRAWL_OUTW;
+	ctx.stroke();
+	// Trunk
+	const trunkG = ctx.createLinearGradient(hx, hy, hx + r * 0.7, hy);
+	trunkG.addColorStop(0, bodyLight);
+	trunkG.addColorStop(0.55, bodyDark);
+	trunkG.addColorStop(1, "#0a0a0a");
+	ctx.beginPath();
+	ctx.moveTo(hx + r * 0.1, hy);
+	ctx.quadraticCurveTo(
+		hx + r * 0.48,
+		hy - r * 0.12,
+		hx + r * 0.68,
+		hy + r * 0.06,
+	);
+	ctx.strokeStyle = trunkG;
+	ctx.lineWidth = 4.2;
+	ctx.lineCap = "round";
+	ctx.stroke();
+	// Tusks
+	ctx.beginPath();
+	ctx.arc(hx + r * 0.1, hy + r * 0.1, r * 0.1, 0.1, 0.9);
+	ctx.strokeStyle = "rgba(255,250,240,0.95)";
+	ctx.lineWidth = 1.2;
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.arc(hx + r * 0.1, hy - r * 0.1, r * 0.1, -0.9, -0.1);
+	ctx.stroke();
+	// eyes
+	for (const sy of [-1, 1] as const) {
+		ctx.beginPath();
+		ctx.arc(hx + r * 0.12, hy + sy * (r * 0.05), 1.1, 0, Math.PI * 2);
+		ctx.fillStyle = "#0a0a0a";
+		ctx.fill();
+	}
+	// Mini MAGA cap (party colors)
+	const capG = ctx.createLinearGradient(
+		hx - r * 0.1,
+		hy - r * 0.55,
+		hx + r * 0.35,
+		hy - r * 0.1,
+	);
+	capG.addColorStop(0, "#ff3a2a");
+	capG.addColorStop(0.6, capRed);
+	capG.addColorStop(1, "#4a0000");
+	ctx.beginPath();
+	ctx.moveTo(hx - r * 0.18, hy - r * 0.1);
+	ctx.lineTo(hx - r * 0.1, hy - r * 0.58);
+	ctx.lineTo(hx + r * 0.2, hy - r * 0.62);
+	ctx.lineTo(hx + r * 0.38, hy - r * 0.12);
+	ctx.lineTo(hx + r * 0.05, hy - 0.02 * r);
+	ctx.closePath();
+	ctx.fillStyle = capG;
+	ctx.fill();
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = 1.1;
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(hx + r * 0.02, hy - r * 0.05);
+	ctx.lineTo(hx + r * 0.1, hy - r * 0.5);
+	ctx.lineTo(hx + r * 0.36, hy - r * 0.2);
+	ctx.closePath();
+	ctx.fillStyle = capPanel;
+	ctx.fill();
+	ctx.stroke();
+	const capFont = `bold ${Math.max(3.2, r * 0.055)}px ui-sans-serif, sans-serif`;
+	ctx.save();
+	ctx.translate(hx + r * 0.18, hy - r * 0.32);
+	ctx.rotate(-0.12);
+	ctx.font = capFont;
+	ctx.fillStyle = "#102878";
+	ctx.textAlign = "center";
+	ctx.textBaseline = "middle";
+	ctx.fillText("MAGA", 0, 0);
+	ctx.restore();
+	// Pistol
+	ctx.save();
+	ctx.translate(r * 0.4, r * 0.1);
+	ctx.rotate(0.05);
+	drawHandgunTopDown(ctx, r * 0.95);
+	ctx.restore();
+	if (hitFlash > 0) {
+		ctx.globalAlpha = clamp(hitFlash / 0.15, 0, 1) * 0.6;
+		ctx.beginPath();
+		ctx.ellipse(0, 0, txW * 1.15, tyH * 1.15, 0, 0, Math.PI * 2);
 		ctx.fillStyle = "#ffffff";
 		ctx.fill();
 		ctx.globalAlpha = 1;
@@ -1015,45 +1407,110 @@ function drawSoldier(
 	ctx.restore();
 }
 
-function drawPlayer(ctx: CanvasRenderingContext2D, p: Player) {
-	drawSoldier(
-		ctx,
-		p.pos,
-		p.angle,
-		"#3d6e3a",
-		"#ffffff",
-		PLAYER_RADIUS,
-		p.hitFlash,
-	);
-	// Player ring marker
-	ctx.beginPath();
-	ctx.arc(p.pos.x, p.pos.y, PLAYER_RADIUS + 4, 0, Math.PI * 2);
-	ctx.strokeStyle = "rgba(120, 220, 120, 0.55)";
-	ctx.lineWidth = 1.5;
-	ctx.stroke();
-}
-
-function drawAlly(ctx: CanvasRenderingContext2D, a: Ally) {
-	drawSoldier(
+function drawVigilante(ctx: CanvasRenderingContext2D, a: Ally) {
+	drawGOPBrawler(
 		ctx,
 		a.pos,
 		a.angle,
-		a.uniform,
-		a.headband,
 		ALLY_RADIUS,
+		a.armor,
+		a.armorHighlight,
+		a.cape,
+		a.capeInner,
 		a.hitFlash,
 	);
 }
 
+function drawPlayer(ctx: CanvasRenderingContext2D, p: Player) {
+	drawGOPBrawler(
+		ctx,
+		p.pos,
+		p.angle,
+		PLAYER_RADIUS,
+		PLAYER_GOP_SKIN.armor,
+		PLAYER_GOP_SKIN.armorHighlight,
+		PLAYER_GOP_SKIN.cape,
+		PLAYER_GOP_SKIN.capeInner,
+		p.hitFlash,
+	);
+	// Brawl-style “your brawler” ring
+	ctx.beginPath();
+	ctx.arc(p.pos.x, p.pos.y, PLAYER_RADIUS + 8, 0, Math.PI * 2);
+	ctx.strokeStyle = "rgba(255,255,255,0.95)";
+	ctx.lineWidth = 3;
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.arc(p.pos.x, p.pos.y, PLAYER_RADIUS + 6, 0, Math.PI * 2);
+	ctx.strokeStyle = "rgba(0,200,255,0.95)";
+	ctx.lineWidth = 2;
+	ctx.stroke();
+}
+
+function drawAlly(ctx: CanvasRenderingContext2D, a: Ally) {
+	drawVigilante(ctx, a);
+}
+
 function drawDeadAlly(ctx: CanvasRenderingContext2D, a: Ally) {
+	const r = ALLY_RADIUS;
 	ctx.save();
 	ctx.translate(a.pos.x, a.pos.y);
+	ctx.rotate(a.angle);
+	const tw = r * 0.52;
+	const th = r * 0.48;
+	// Fallen elephant
 	ctx.beginPath();
-	ctx.arc(0, 0, ALLY_RADIUS, 0, Math.PI * 2);
-	ctx.fillStyle = "rgba(70,40,40,0.65)";
+	ctx.ellipse(0, 0, tw * 0.9, th * 0.85, 0.2, 0, Math.PI * 2);
+	ctx.fillStyle = createBlobGradient(
+		ctx,
+		0,
+		0,
+		tw,
+		th,
+		"rgba(90,100,120,0.85)",
+		"rgba(40,48,60,0.9)",
+		"rgba(0,0,0,0.5)",
+	);
 	ctx.fill();
-	ctx.strokeStyle = "rgba(0,0,0,0.4)";
-	ctx.lineWidth = 1;
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = BRAWL_OUTW;
+	ctx.stroke();
+	for (const s of [1, -1] as const) {
+		ctx.beginPath();
+		ctx.ellipse(0, s * r * 0.3, r * 0.2, r * 0.1, 0, 0, Math.PI * 2);
+		ctx.fillStyle = "rgba(50,50,60,0.4)";
+		ctx.fill();
+	}
+	// Dropped “head + cap”
+	const ox = r * 0.35;
+	const oy = 0;
+	ctx.beginPath();
+	ctx.ellipse(ox, oy, r * 0.22, r * 0.2, 0, 0, Math.PI * 2);
+	ctx.fillStyle = "rgba(60, 58, 65, 0.45)";
+	ctx.fill();
+	// Fallen MAGA cap
+	const cr = -r * 0.55;
+	const cyy = 0.15 * r;
+	ctx.beginPath();
+	ctx.ellipse(cr, cyy, r * 0.4, r * 0.22, 0.1, 0, Math.PI * 2);
+	ctx.fillStyle = createBlobGradient(
+		ctx,
+		cr,
+		cyy,
+		r * 0.4,
+		r * 0.22,
+		"#ff4040",
+		"#a81010",
+		"rgba(0,0,0,0.45)",
+	);
+	ctx.fill();
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = BRAWL_OUTW;
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(cr - r * 0.35, cyy);
+	ctx.lineTo(cr + r * 0.2, cyy - r * 0.1);
+	ctx.strokeStyle = "rgba(0,0,0,0.3)";
+	ctx.lineWidth = 0.5;
 	ctx.stroke();
 	ctx.restore();
 }
@@ -1072,55 +1529,186 @@ function drawZombie(ctx: CanvasRenderingContext2D, z: Zombie) {
 		0,
 		Math.PI * 2,
 	);
-	ctx.fillStyle = "rgba(0,0,0,0.35)";
+	const zs = ctx.createRadialGradient(
+		0,
+		z.radius * 0.6,
+		0,
+		0,
+		z.radius * 0.7,
+		z.radius,
+	);
+	zs.addColorStop(0, "rgba(0,0,0,0.5)");
+	zs.addColorStop(1, "rgba(0,0,0,0.1)");
+	ctx.fillStyle = zs;
 	ctx.fill();
 
 	const angle = Math.atan2(z.vel.y, z.vel.x);
 	ctx.rotate(angle);
 
-	// Body
-	const bodyColor =
+	const sm = z.type === "brute" ? 1.15 : z.type === "runner" ? 0.9 : 1;
+	// Rival “blue team” suits (D-style primary blues)
+	const suit =
 		z.type === "brute"
-			? "#3a4a25"
+			? { main: "#0d3a7a", light: "#2a5ab8" }
 			: z.type === "runner"
-				? "#5a5a30"
-				: "#4a5a32";
+				? { main: "#1050a0", light: "#3a7ee0" }
+				: { main: "#1248a0", light: "#3888e8" };
+	const puffy = z.radius * 0.9 * sm;
+	const sLight = suit.light;
+	const tw = puffy * 0.5;
+	const th = puffy * 0.46;
+	// **Donkey** body (D mascot)
 	ctx.beginPath();
-	ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
-	ctx.fillStyle = bodyColor;
+	ctx.ellipse(0, 0, tw, th, 0, 0, Math.PI * 2);
+	ctx.fillStyle = createBlobGradient(
+		ctx,
+		0,
+		0,
+		tw,
+		th,
+		sLight,
+		suit.main,
+		"rgba(0,0,0,0.4)",
+	);
 	ctx.fill();
-	ctx.strokeStyle = "rgba(0,0,0,0.5)";
-	ctx.lineWidth = 1.5;
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = BRAWL_OUTW;
 	ctx.stroke();
-
-	// Ragged tear marks
-	ctx.fillStyle = "rgba(0,0,0,0.35)";
-	ctx.fillRect(-z.radius * 0.5, -z.radius * 0.15, z.radius * 0.6, 3);
-	ctx.fillRect(-z.radius * 0.2, z.radius * 0.2, z.radius * 0.5, 2);
-
-	// Face / eyes
-	ctx.fillStyle = "#3a2a22";
+	// Blue “blanket” / saddle
+	const sg = ctx.createLinearGradient(0, -puffy * 0.2, 0, puffy * 0.3);
+	sg.addColorStop(0, "#4080e0");
+	sg.addColorStop(0.5, "#2050a0");
+	sg.addColorStop(1, "#102860");
+	ctx.fillStyle = sg;
 	ctx.beginPath();
-	ctx.arc(z.radius * 0.2, 0, z.radius * 0.5, 0, Math.PI * 2);
+	ctx.moveTo(0, -puffy * 0.1);
+	ctx.lineTo(-puffy * 0.2, puffy * 0.22);
+	ctx.lineTo(puffy * 0.2, puffy * 0.22);
+	ctx.closePath();
 	ctx.fill();
-	ctx.fillStyle = "#ff3030";
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = 0.6;
+	ctx.stroke();
+	// Four legs + hooves
+	for (const dx of [-0.3, 0.24] as const) {
+		for (const sy of [-1, 1] as const) {
+			ctx.beginPath();
+			ctx.ellipse(
+				dx * puffy,
+				sy * (th * 0.78),
+				puffy * 0.08,
+				puffy * 0.1,
+				0,
+				0,
+				Math.PI * 2,
+			);
+			ctx.fillStyle = createBlobGradient(
+				ctx,
+				dx * puffy,
+				sy * (th * 0.78),
+				puffy * 0.08,
+				puffy * 0.1,
+				"#2a2a2a",
+				suit.main,
+				"rgba(0,0,0,0.35)",
+			);
+			ctx.fill();
+			ctx.strokeStyle = BRAWL_OUT;
+			ctx.lineWidth = 0.55;
+			ctx.stroke();
+		}
+	}
+	// Tail
 	ctx.beginPath();
-	ctx.arc(z.radius * 0.4, -z.radius * 0.18, z.radius * 0.13, 0, Math.PI * 2);
-	ctx.arc(z.radius * 0.4, z.radius * 0.18, z.radius * 0.13, 0, Math.PI * 2);
+	ctx.moveTo(-tw * 0.8, 0.05 * puffy);
+	ctx.quadraticCurveTo(-puffy * 0.7, puffy * 0.1, -puffy * 0.85, 0.18 * puffy);
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = 1.1;
+	ctx.lineCap = "round";
+	ctx.stroke();
+	// Muzzle (elongated) + long ears
+	const fcx = puffy * 0.4;
+	const fcy = 0.01 * puffy;
+	ctx.beginPath();
+	ctx.ellipse(fcx, fcy, puffy * 0.2, puffy * 0.1, 0, 0, Math.PI * 2);
+	ctx.fillStyle = createBlobGradient(
+		ctx,
+		fcx,
+		fcy,
+		puffy * 0.2,
+		puffy * 0.1,
+		"#d0a890",
+		"#805858",
+		"rgba(0,0,0,0.3)",
+	);
 	ctx.fill();
+	ctx.stroke();
+	for (const sign of [-1, 1] as const) {
+		ctx.beginPath();
+		ctx.ellipse(
+			fcx * 0.4,
+			fcy - sign * puffy * 0.2,
+			puffy * 0.08,
+			puffy * 0.22,
+			sign * 0.15,
+			0,
+			Math.PI * 2,
+		);
+		ctx.fillStyle = createBlobGradient(
+			ctx,
+			fcx * 0.4,
+			fcy,
+			puffy * 0.08,
+			puffy * 0.22,
+			"#1a1a1a",
+			"#0a0a0a",
+			"rgba(0,0,0,0.4)",
+		);
+		ctx.fill();
+		ctx.strokeStyle = BRAWL_OUT;
+		ctx.lineWidth = 0.6;
+		ctx.stroke();
+	}
+	// small eyes
+	for (const sy of [-1, 1] as const) {
+		ctx.beginPath();
+		ctx.arc(fcx, fcy + sy * (puffy * 0.03), 0.9, 0, Math.PI * 2);
+		ctx.fillStyle = "#0a0a0a";
+		ctx.fill();
+	}
+	// Muzzle end
+	ctx.beginPath();
+	ctx.ellipse(
+		fcx + puffy * 0.18,
+		fcy,
+		puffy * 0.07,
+		puffy * 0.06,
+		0,
+		0,
+		Math.PI * 2,
+	);
+	ctx.fillStyle = "rgba(24, 24, 28, 0.85)";
+	ctx.fill();
+	ctx.save();
+	ctx.translate(puffy * 0.38, puffy * 0.08);
+	ctx.rotate(0.04);
+	drawHandgunTopDown(ctx, puffy * 0.88);
+	ctx.restore();
 
 	if (z.type === "brute") {
-		ctx.strokeStyle = "#1a1a1a";
-		ctx.lineWidth = 2;
+		ctx.strokeStyle = "rgba(255,200,80,0.75)";
+		ctx.lineWidth = 2.5;
+		ctx.setLineDash([5, 4]);
 		ctx.beginPath();
-		ctx.arc(0, 0, z.radius - 3, 0, Math.PI * 2);
+		ctx.ellipse(0, 0, tw * 1.12, th * 1.1, 0, 0, Math.PI * 2);
 		ctx.stroke();
+		ctx.setLineDash([]);
 	}
 
 	if (z.hitFlash > 0) {
 		ctx.globalAlpha = clamp(z.hitFlash / 0.1, 0, 1) * 0.7;
 		ctx.beginPath();
-		ctx.arc(0, 0, z.radius, 0, Math.PI * 2);
+		ctx.ellipse(0, 0, tw * 1.1, th * 1.1, 0, 0, Math.PI * 2);
 		ctx.fillStyle = "#ffffff";
 		ctx.fill();
 		ctx.globalAlpha = 1;
@@ -1130,16 +1718,31 @@ function drawZombie(ctx: CanvasRenderingContext2D, z: Zombie) {
 
 function drawBullet(ctx: CanvasRenderingContext2D, b: Bullet) {
 	const angle = Math.atan2(b.vel.y, b.vel.x);
+	const isPl = b.team === "player";
 	ctx.save();
 	ctx.translate(b.pos.x, b.pos.y);
 	ctx.rotate(angle);
-	ctx.shadowColor =
-		b.team === "player"
-			? "rgba(255, 220, 80, 0.9)"
-			: "rgba(140, 200, 255, 0.9)";
+	ctx.shadowColor = isPl
+		? "rgba(255, 220, 80, 0.9)"
+		: "rgba(140, 200, 255, 0.9)";
 	ctx.shadowBlur = 8;
-	ctx.fillStyle = b.team === "player" ? "#ffe26a" : "#a8d8ff";
+	const bg = ctx.createLinearGradient(-6, -1.5, 6, 1.5);
+	if (isPl) {
+		bg.addColorStop(0, "rgba(255,255,255,0.95)");
+		bg.addColorStop(0.4, "#ffe26a");
+		bg.addColorStop(0.7, "#c9a020");
+		bg.addColorStop(1, "rgba(80,50,0,0.6)");
+	} else {
+		bg.addColorStop(0, "rgba(255,255,255,0.9)");
+		bg.addColorStop(0.45, "#a8d8ff");
+		bg.addColorStop(0.75, "#4a8ec8");
+		bg.addColorStop(1, "rgba(20,30,60,0.55)");
+	}
+	ctx.fillStyle = bg;
 	ctx.fillRect(-6, -1.5, 12, 3);
+	ctx.strokeStyle = BRAWL_OUT;
+	ctx.lineWidth = 1.2;
+	ctx.strokeRect(-6.5, -2, 13, 4);
 	ctx.restore();
 }
 
@@ -1163,14 +1766,38 @@ function drawHpBar(
 	height: number,
 	color: string,
 ) {
-	const x = pos.x - width / 2;
-	const y = pos.y - yOffset;
-	ctx.fillStyle = "rgba(0,0,0,0.55)";
-	ctx.fillRect(x - 1, y - 1, width + 2, height + 2);
-	ctx.fillStyle = "#1a1a1a";
-	ctx.fillRect(x, y, width, height);
-	ctx.fillStyle = color;
-	ctx.fillRect(x, y, width * clamp(hp / maxHp, 0, 1), height);
+	const frac = clamp(hp / maxHp, 0, 1);
+	const cy = pos.y - yOffset + height / 2;
+	const x0 = pos.x - width / 2;
+	const x1 = pos.x + width / 2;
+	ctx.save();
+	ctx.lineCap = "round";
+	ctx.lineJoin = "round";
+	ctx.beginPath();
+	ctx.lineWidth = height + 4;
+	ctx.strokeStyle = "#f4c84a";
+	ctx.moveTo(x0, cy);
+	ctx.lineTo(x1, cy);
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.lineWidth = height;
+	ctx.strokeStyle = "#0c1a36";
+	ctx.moveTo(x0, cy);
+	ctx.lineTo(x1, cy);
+	ctx.stroke();
+	if (frac > 0.001) {
+		const xm = x0 + (x1 - x0) * frac;
+		const grd = ctx.createLinearGradient(x0, cy, xm, cy);
+		grd.addColorStop(0, color);
+		grd.addColorStop(1, "rgba(255,255,255,0.25)");
+		ctx.beginPath();
+		ctx.lineWidth = height - 2;
+		ctx.strokeStyle = grd;
+		ctx.moveTo(x0, cy);
+		ctx.lineTo(xm, cy);
+		ctx.stroke();
+	}
+	ctx.restore();
 }
 
 function drawVignette(ctx: CanvasRenderingContext2D) {
@@ -1183,7 +1810,7 @@ function drawVignette(ctx: CanvasRenderingContext2D) {
 		Math.max(ARENA_W, ARENA_H) * 0.75,
 	);
 	grad.addColorStop(0, "rgba(0,0,0,0)");
-	grad.addColorStop(1, "rgba(0,0,0,0.55)");
+	grad.addColorStop(1, "rgba(0,40,80,0.06)");
 	ctx.fillStyle = grad;
 	ctx.fillRect(0, 0, ARENA_W, ARENA_H);
 }
@@ -1197,33 +1824,76 @@ function drawBanner(
 	const t = clamp(time / maxTime, 0, 1);
 	const fade = t > 0.7 ? (1 - t) / 0.3 : t < 0.2 ? t / 0.2 : 1;
 	ctx.globalAlpha = clamp(fade, 0, 1);
-	ctx.fillStyle = "rgba(0,0,0,0.55)";
-	ctx.fillRect(0, ARENA_H / 2 - 50, ARENA_W, 100);
-	ctx.fillStyle = "#ffffff";
-	ctx.font = "bold 56px ui-sans-serif, system-ui, sans-serif";
+	const bw = Math.min(520, ARENA_W - 48);
+	const bh = 108;
+	const bx = (ARENA_W - bw) / 2;
+	const by = ARENA_H / 2 - bh / 2;
+	const panel = ctx.createLinearGradient(bx, by, bx, by + bh);
+	panel.addColorStop(0, "rgba(40,100,200,0.88)");
+	panel.addColorStop(0.5, "rgba(25,70,180,0.9)");
+	panel.addColorStop(1, "rgba(15,40,120,0.92)");
+	ctx.fillStyle = panel;
+	ctx.beginPath();
+	ctx.moveTo(bx + 18, by);
+	ctx.lineTo(bx + bw - 18, by);
+	ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + 18);
+	ctx.lineTo(bx + bw, by + bh - 18);
+	ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - 18, by + bh);
+	ctx.lineTo(bx + 18, by + bh);
+	ctx.quadraticCurveTo(bx, by + bh, bx, by + bh - 18);
+	ctx.lineTo(bx, by + 18);
+	ctx.quadraticCurveTo(bx, by, bx + 18, by);
+	ctx.closePath();
+	ctx.fill();
+	ctx.strokeStyle = "#f6d86a";
+	ctx.lineWidth = 5;
+	ctx.stroke();
+	ctx.font = BR_FONT;
 	ctx.textAlign = "center";
 	ctx.textBaseline = "middle";
-	ctx.fillText(text, ARENA_W / 2, ARENA_H / 2);
+	const tx = ARENA_W / 2;
+	const ty = ARENA_H / 2 + 3;
+	for (let i = 6; i >= 1; i -= 1) {
+		ctx.strokeStyle = i % 2 === 0 ? "#0a1c40" : "#102850";
+		ctx.lineWidth = i;
+		ctx.strokeText(text, tx, ty);
+	}
+	const txtGrad = ctx.createLinearGradient(0, ty - 28, 0, ty + 28);
+	txtGrad.addColorStop(0, "#fff8c0");
+	txtGrad.addColorStop(0.5, "#ffd030");
+	txtGrad.addColorStop(1, "#e09000");
+	ctx.fillStyle = txtGrad;
+	ctx.fillText(text, tx, ty);
 	ctx.globalAlpha = 1;
 }
 
 function drawCrosshair(ctx: CanvasRenderingContext2D, mouse: Vec) {
 	ctx.save();
 	ctx.translate(mouse.x, mouse.y);
-	ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
-	ctx.lineWidth = 1.5;
+	const ray = (x0: number, y0: number, x1: number, y1: number) => {
+		ctx.beginPath();
+		ctx.strokeStyle = "rgba(0,0,0,0.5)";
+		ctx.lineWidth = 3;
+		ctx.moveTo(x0, y0);
+		ctx.lineTo(x1, y1);
+		ctx.stroke();
+		ctx.beginPath();
+		ctx.strokeStyle = "#7ee8ff";
+		ctx.lineWidth = 1.5;
+		ctx.moveTo(x0, y0);
+		ctx.lineTo(x1, y1);
+		ctx.stroke();
+	};
+	ray(-22, 0, -9, 0);
+	ray(9, 0, 22, 0);
+	ray(0, -22, 0, -9);
+	ray(0, 9, 0, 22);
 	ctx.beginPath();
-	ctx.arc(0, 0, 12, 0, Math.PI * 2);
-	ctx.stroke();
-	ctx.beginPath();
-	ctx.moveTo(-16, 0);
-	ctx.lineTo(-6, 0);
-	ctx.moveTo(6, 0);
-	ctx.lineTo(16, 0);
-	ctx.moveTo(0, -16);
-	ctx.lineTo(0, -6);
-	ctx.moveTo(0, 6);
-	ctx.lineTo(0, 16);
+	ctx.arc(0, 0, 4, 0, Math.PI * 2);
+	ctx.fillStyle = "#b8f4ff";
+	ctx.fill();
+	ctx.strokeStyle = "rgba(0,0,0,0.45)";
+	ctx.lineWidth = 1;
 	ctx.stroke();
 	ctx.restore();
 }
@@ -1394,55 +2064,59 @@ export default function Game() {
 		sfxRef.current?.ensureStarted();
 	};
 
+	const brawlBtn =
+		"relative select-none rounded-full border-4 border-[#143252] bg-gradient-to-b from-[#ffec90] to-[#ffb000] px-10 py-3.5 font-extrabold text-[#102840] text-lg shadow-[0_5px_0_#0a1c30,0_10px_20px_rgba(0,0,0,0.35)] transition-transform before:pointer-events-none before:absolute before:inset-x-3 before:top-1.5 before:h-[38%] before:rounded-t-[999px] before:bg-gradient-to-b before:from-white/50 before:to-transparent after:pointer-events-none after:absolute after:inset-0 after:rounded-full after:ring-1 after:ring-inset after:ring-white/30 hover:brightness-105 active:translate-y-1 active:shadow-[0_2px_0_#0a1c30] sm:px-14 sm:py-4 sm:text-2xl";
+
 	return (
 		<div
-			className="relative select-none rounded-2xl border border-neutral-800 bg-neutral-900 p-4 shadow-2xl"
-			style={{ width: ARENA_W + 32 }}
+			className="relative select-none rounded-[1.75rem] border-[#f2cc4a] border-[5px] bg-gradient-to-b from-[#3d8ce8] via-[#256fd8] to-[#164a9e] p-2.5 shadow-[0_10px_0_#0c2348,0_18px_40px_rgba(0,0,0,0.45)] sm:rounded-[2rem] sm:p-3.5"
+			style={{ width: Math.min(ARENA_W + 36, 1024) }}
 		>
-			<div className="mb-3 flex items-center justify-between text-neutral-200">
-				<div className="flex items-center gap-3">
-					<div className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm">
-						<span className="text-neutral-400">Wave </span>
-						<span className="font-bold text-white">{hud.wave}</span>
-					</div>
-					<div className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm">
-						<span className="text-neutral-400">Kills </span>
-						<span className="font-bold text-white">{hud.kills}</span>
-					</div>
-					<div className="rounded-lg bg-neutral-800 px-3 py-1.5 text-sm">
-						<span className="text-neutral-400">Squad </span>
-						<span className="font-bold text-white">
-							{hud.alliesAlive}/{hud.alliesTotal}
-						</span>
-					</div>
+			{/* Match info bar (Brawl top strip) */}
+			<div className="mb-2 flex flex-col gap-2 sm:mb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+				<div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+					<StatPill emoji="🌊" label="WAVE" value={String(hud.wave || "—")} />
+					<StatPill emoji="💀" label="KILLS" value={String(hud.kills)} />
+					<StatPill
+						emoji="🐘"
+						label="SQUAD"
+						value={`${hud.alliesAlive}/${hud.alliesTotal}`}
+					/>
 				</div>
-				<div className="flex w-80 items-center gap-3">
+				<div className="flex w-full min-w-0 items-center gap-2 sm:max-w-[22rem] sm:gap-3">
 					<button
-						aria-label={muted ? "Unmute music" : "Mute music"}
-						className="rounded-lg bg-neutral-800 px-2.5 py-1.5 text-neutral-300 text-xs transition hover:bg-neutral-700 hover:text-white"
+						aria-label={muted ? "Unmute" : "Mute"}
+						className="shrink-0 rounded-full border-[#143252] border-[3px] bg-gradient-to-b from-[#5aa8ff] to-[#1e5fd0] px-2.5 py-2 font-extrabold text-[#102030] text-xs shadow-[0_3px_0_#0a1c30] active:translate-y-px"
 						onClick={() => setMuted((m) => !m)}
 						type="button"
 					>
-						{muted ? "♪ off" : "♪ on"}
+						{muted ? "🔇" : "♪"}
 					</button>
-					<span className="text-neutral-400 text-xs uppercase tracking-wider">
-						HP
-					</span>
-					<div className="relative h-3 flex-1 overflow-hidden rounded-full bg-neutral-800">
-						<div
-							className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-lime-400 transition-[width] duration-150"
-							style={{ width: `${(hud.hp / hud.maxHp) * 100}%` }}
-						/>
+					<div className="min-w-0 flex-1">
+						<div className="mb-0.5 flex items-center justify-between font-bold text-[#b8dcff] text-[10px] uppercase leading-none tracking-wider sm:text-xs">
+							<span>BRAWLER</span>
+							<span className="text-white tabular-nums">
+								{hud.hp} / {hud.maxHp}
+							</span>
+						</div>
+						<div className="relative h-3.5 overflow-visible rounded-full border-[#f2cc4a] border-[2px] bg-[#0a1830] p-0.5 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] sm:h-4">
+							<div
+								className="h-full min-w-0 rounded-full bg-gradient-to-r from-[#00e090] to-[#90f060] shadow-[0_0_8px_rgba(0,255,150,0.6)]"
+								style={{
+									width: `${Math.max(0, Math.min(1, hud.hp / hud.maxHp)) * 100}%`,
+								}}
+							/>
+						</div>
 					</div>
-					<span className="w-12 text-right font-semibold text-sm tabular-nums">
-						{hud.hp}/{hud.maxHp}
-					</span>
 				</div>
 			</div>
 
-			<div className="relative" style={{ width: ARENA_W, height: ARENA_H }}>
+			<div
+				className="relative overflow-hidden rounded-2xl border-4 border-[#142e58] bg-[#061428] shadow-[inset_0_2px_0_rgba(255,255,255,0.12)]"
+				style={{ width: ARENA_W, height: ARENA_H }}
+			>
 				<canvas
-					className="block rounded-lg"
+					className="block"
 					ref={canvasRef}
 					style={{
 						width: ARENA_W,
@@ -1453,83 +2127,131 @@ export default function Game() {
 
 				{hud.phase === "menu" && (
 					<Overlay>
-						<h1 className="mb-2 font-extrabold text-4xl text-white tracking-tight">
-							SQUAD <span className="text-emerald-400">vs</span> ZOMBIES
-						</h1>
-						<p className="mb-6 max-w-md text-center text-neutral-300 text-sm">
-							You and your squad of three hold the arena against endless waves
-							of the undead.
+						<p className="mb-1 font-extrabold text-[#bfe4ff] text-sm uppercase tracking-[0.2em]">
+							3V3
 						</p>
-						<div className="mb-6 grid grid-cols-2 gap-x-8 gap-y-1 text-neutral-300 text-sm">
-							<div>
-								<span className="font-semibold text-white">WASD</span> — move
-							</div>
-							<div>
-								<span className="font-semibold text-white">Mouse</span> — aim
-							</div>
-							<div>
-								<span className="font-semibold text-white">Left Click</span> —
-								fire
-							</div>
-							<div>
-								<span className="font-semibold text-white">Esc</span> — pause
-							</div>
-						</div>
-						<button
-							className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
-							onClick={startGame}
-							type="button"
+						<h1
+							className="mb-1 text-center font-extrabold text-4xl text-white leading-none drop-shadow-[0_4px_0_#0a1c30] sm:text-5xl"
+							style={{ textShadow: "0 0 2px #000, 0 3px 0 #143252" }}
 						>
-							DEPLOY
+							ARENA
+						</h1>
+						<p
+							className="mb-6 max-w-sm text-center font-bold text-[#ffe8a0] text-lg sm:text-xl"
+							style={{ textShadow: "0 2px 0 #0a1c30" }}
+						>
+							ELEPHANTS <span className="text-white"> vs </span> DONKEYS
+						</p>
+						<p className="mb-6 max-w-md text-center font-semibold text-[#d4ecff] text-sm leading-relaxed sm:text-base">
+							Hold the zone with your team. Wipe the wave before they overrun
+							you!
+						</p>
+						<div className="mb-6 grid w-full max-w-sm grid-cols-2 gap-x-4 gap-y-2 text-left font-bold text-sm text-white sm:gap-y-2.5 sm:text-base">
+							<HelpRow d="move" k="W A S D" />
+							<HelpRow d="aim" k="MOUSE" />
+							<HelpRow d="fire" k="CLICK" />
+							<HelpRow d="pause" k="ESC" />
+						</div>
+						<button className={brawlBtn} onClick={startGame} type="button">
+							PLAY
 						</button>
 					</Overlay>
 				)}
 
 				{hud.phase === "gameover" && (
 					<Overlay>
-						<h1 className="mb-2 font-extrabold text-4xl text-red-400 tracking-tight">
-							OVERRUN
-						</h1>
-						<p className="mb-6 text-neutral-300">
-							You held <span className="font-bold text-white">{hud.wave}</span>{" "}
-							wave{hud.wave === 1 ? "" : "s"} and dropped{" "}
-							<span className="font-bold text-white">{hud.kills}</span> of them.
+						<p className="mb-1 font-extrabold text-[#ffb0b0] text-sm uppercase tracking-[0.2em]">
+							DEFEAT
 						</p>
-						<button
-							className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
-							onClick={startGame}
-							type="button"
+						<h1
+							className="mb-4 text-center font-extrabold text-4xl text-white sm:text-5xl"
+							style={{ textShadow: "0 4px 0 #0a1c30, 0 0 20px #800" }}
 						>
-							REDEPLOY
+							DEFEATED
+						</h1>
+						<p className="mb-8 max-w-sm text-center font-bold text-[#d4ecff] text-lg sm:text-xl">
+							Wave <span className="text-[#ffe066]">{hud.wave}</span> · Kills{" "}
+							<span className="text-[#ffe066]">{hud.kills}</span>
+						</p>
+						<button className={brawlBtn} onClick={startGame} type="button">
+							PLAY AGAIN
 						</button>
 					</Overlay>
 				)}
 
 				{hud.phase === "playing" && hud.paused && (
 					<Overlay>
-						<h1 className="mb-4 font-extrabold text-4xl text-white">PAUSED</h1>
-						<button
-							className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
-							onClick={resume}
-							type="button"
+						<h1
+							className="mb-6 font-extrabold text-5xl text-white sm:text-6xl"
+							style={{ textShadow: "0 5px 0 #0a1c30" }}
 						>
+							PAUSED
+						</h1>
+						<button className={brawlBtn} onClick={resume} type="button">
 							RESUME
 						</button>
 					</Overlay>
 				)}
 			</div>
 
-			<p className="mt-3 text-center text-neutral-500 text-xs">
-				Click the arena to capture controls. Press Esc to pause.
+			<p className="mt-2 text-center font-bold text-[#a8c8f0] text-xs leading-tight sm:mt-3 sm:text-sm">
+				Click the arena to focus · <span className="text-[#fff6c0]">Esc</span>{" "}
+				to pause
 			</p>
+		</div>
+	);
+}
+
+function StatPill({
+	emoji,
+	label,
+	value,
+}: {
+	emoji: string;
+	label: string;
+	value: string;
+}) {
+	return (
+		<div className="flex items-center gap-1.5 rounded-full border-2 border-[#f0c84a] bg-gradient-to-b from-[#4a9ef8] to-[#1a58c4] px-2.5 py-1.5 pl-1.5 font-extrabold text-white text-xs shadow-[0_3px_0_#0c2a55] sm:gap-2 sm:px-3.5 sm:py-2 sm:text-sm">
+			<span
+				aria-hidden
+				className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-[#0c2a55] bg-gradient-to-b from-white/25 to-white/5 text-base sm:h-8 sm:w-8"
+			>
+				{emoji}
+			</span>
+			<span className="text-[#b8dfff] text-[10px] sm:text-xs">{label}</span>
+			<span className="min-w-[1.5rem] text-right text-[#fff6a0] tabular-nums sm:min-w-[2rem]">
+				{value}
+			</span>
+		</div>
+	);
+}
+
+function HelpRow({ k, d }: { k: string; d: string }) {
+	return (
+		<div className="flex items-baseline justify-between gap-2 rounded-lg border border-white/10 bg-[#0a2a50]/50 px-2 py-1.5 sm:px-3">
+			<span className="shrink-0 text-[#ffe066] text-xs tracking-wide sm:text-sm">
+				{k}
+			</span>
+			<span className="text-[#8ec0f0] text-xs sm:text-sm">{d}</span>
 		</div>
 	);
 }
 
 function Overlay({ children }: { children: React.ReactNode }) {
 	return (
-		<div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-black/65 backdrop-blur-sm">
-			{children}
+		<div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-gradient-to-b from-[#1255c0]/88 via-[#0d3a8a]/92 to-[#061a40]/95 px-4 py-6 backdrop-blur-[2px]">
+			<div
+				aria-hidden
+				className="pointer-events-none absolute inset-0 opacity-30"
+				style={{
+					backgroundImage:
+						"repeating-linear-gradient(-45deg, transparent, transparent 8px, rgba(255,255,255,0.04) 8px, rgba(255,255,255,0.04) 16px)",
+				}}
+			/>
+			<div className="relative flex max-w-lg flex-col items-center">
+				{children}
+			</div>
 		</div>
 	);
 }
