@@ -7,6 +7,14 @@
       "kills": 5,
       "durationSeconds": 31,
       "createdAt": "2026-04-25T21:50:36.694Z"
+    },
+    {
+      "id": "24f3bc1f-e70f-4868-a3fc-7d3bfdb75927",
+      "gameSlug": "game",
+      "waveReached": 3,
+      "kills": 25,
+      "durationSeconds": 40,
+      "createdAt": "2026-04-25T21:55:30.678Z"
     }
   ],
   "analyses": [
