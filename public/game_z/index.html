@@ -127,9 +127,12 @@ let playerKills = [];       // recent frame-timestamps of human's kills
 let firstKillDone = false;
 let snapshot = null;        // { t, life, caption, color }
 let matchOver = false, matchResult = false;
-let moments = [];           // array of { image, caption, color }
+let killTimes = [];         // [{ time, caption, color }] tagged during the match
+let matchRecorder = null;
+let matchChunks = [];
+let recordedMatchBlob = null;
+let matchStartMs = 0;
 let editing = false;
-let editFrame = 0;
 let editPending = null;
 let audioCtx = null;
 let audioMaster = null;
@@ -247,25 +250,65 @@ function start() {
   snapshot = null;
   matchOver = false;
   matchResult = false;
-  moments = [];
+  killTimes = [];
+  matchChunks = [];
+  recordedMatchBlob = null;
   editing = false;
-  editFrame = 0;
   editPending = null;
   recordedBlob = null;
   if (shareBtn) shareBtn.classList.add('hidden');
   stopPhonk();
   stopRecording();
+  startMatchRecording();
   running = true;
   overlay.classList.add('hidden');
   loop();
 }
 
+function startMatchRecording() {
+  matchChunks = [];
+  recordedMatchBlob = null;
+  matchStartMs = performance.now();
+  if (typeof MediaRecorder === 'undefined' || !canvas.captureStream) return;
+  let stream;
+  try { stream = canvas.captureStream(30); }
+  catch (_) { return; }
+  let mime = '';
+  for (const t of ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']) {
+    if (MediaRecorder.isTypeSupported(t)) { mime = t; break; }
+  }
+  try {
+    matchRecorder = mime
+      ? new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 2_500_000 })
+      : new MediaRecorder(stream);
+  } catch (_) { matchRecorder = null; return; }
+  matchRecorder.ondataavailable = e => { if (e.data.size > 0) matchChunks.push(e.data); };
+  try { matchRecorder.start(200); }
+  catch (_) { matchRecorder = null; }
+}
+
+function stopMatchRecording() {
+  return new Promise(resolve => {
+    if (!matchRecorder || matchRecorder.state !== 'recording') {
+      if (matchChunks.length) recordedMatchBlob = new Blob(matchChunks, { type: 'video/webm' });
+      return resolve();
+    }
+    matchRecorder.onstop = () => {
+      if (matchChunks.length) recordedMatchBlob = new Blob(matchChunks, { type: 'video/webm' });
+      resolve();
+    };
+    try { matchRecorder.stop(); }
+    catch (_) { resolve(); }
+  });
+}
+
 function endGame(msg, win) {
   running = false;
-  if (moments.length > 0) {
+  if (killTimes.length > 0) {
     editPending = { msg, win };
     startEdit();
   } else {
+    stopMatchRecording();
     showFinalOverlay(msg, win);
   }
 }
@@ -285,12 +328,227 @@ function showFinalOverlay(msg, win) {
   overlay.classList.remove('hidden');
 }
 
-function startEdit() {
+async function startEdit() {
   editing = true;
-  editFrame = 0;
+  await stopMatchRecording();
+  if (!recordedMatchBlob || killTimes.length === 0) {
+    editing = false;
+    if (editPending) showFinalOverlay(editPending.msg, editPending.win);
+    return;
+  }
   startPhonk();
   startRecording();
-  requestAnimationFrame(loop);
+  try { await runEditSequence(); }
+  catch (e) { console.error(e); }
+  stopPhonk();
+  stopRecording();
+  editing = false;
+  if (editPending) showFinalOverlay(editPending.msg, editPending.win);
+}
+
+async function runEditSequence() {
+  const video = document.createElement('video');
+  video.src = URL.createObjectURL(recordedMatchBlob);
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  await new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    video.addEventListener('loadedmetadata', finish, { once: true });
+    setTimeout(finish, 2500);
+  });
+
+  await runEditCard('intro', 1900);
+
+  for (let i = 0; i < killTimes.length; i++) {
+    await runVideoShot(video, killTimes[i], i, killTimes.length);
+    await runFlashTransition(140);
+  }
+
+  await runEditCard('outro', 1900);
+
+  try { URL.revokeObjectURL(video.src); } catch (_) {}
+}
+
+async function runEditCard(kind, durMs) {
+  const startWall = performance.now();
+  return new Promise(resolve => {
+    function frame() {
+      const elapsed = performance.now() - startWall;
+      if (elapsed >= durMs) { resolve(); return; }
+      const t01 = elapsed / durMs;
+      const beatPulse = computeBeatPulse();
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      if (kind === 'intro') drawIntroCard(t01, beatPulse);
+      else                  drawOutroCard(t01, beatPulse);
+      drawEditChrome(beatPulse);
+      requestAnimationFrame(frame);
+    }
+    frame();
+  });
+}
+
+async function runVideoShot(video, meta, idx, total) {
+  const tSec = meta.time / 1000;
+  const seekTo = Math.max(0, Math.min(video.duration - 0.5, tSec - 1.0));
+  video.currentTime = seekTo;
+  await new Promise(resolve => {
+    let done = false;
+    const cb = () => { if (!done) { done = true; video.removeEventListener('seeked', cb); resolve(); } };
+    video.addEventListener('seeked', cb);
+    setTimeout(cb, 1200);
+  });
+  video.playbackRate = 0.65;       // slo-mo
+  try { await video.play(); } catch (_) {}
+
+  const durMs = 2600;
+  const startWall = performance.now();
+  return new Promise(resolve => {
+    function frame() {
+      const elapsed = performance.now() - startWall;
+      if (elapsed >= durMs) {
+        try { video.pause(); } catch (_) {}
+        resolve();
+        return;
+      }
+      const t01 = elapsed / durMs;
+      const beatPulse = computeBeatPulse();
+      drawVideoShot(video, meta, t01, beatPulse, idx, total);
+      drawEditChrome(beatPulse);
+      requestAnimationFrame(frame);
+    }
+    frame();
+  });
+}
+
+async function runFlashTransition(durMs) {
+  const startWall = performance.now();
+  return new Promise(resolve => {
+    function frame() {
+      const elapsed = performance.now() - startWall;
+      if (elapsed >= durMs) { resolve(); return; }
+      const k = elapsed / durMs;
+      ctx.fillStyle = `rgba(255,255,255,${1 - k})`;
+      ctx.fillRect(0, 0, W, H);
+      requestAnimationFrame(frame);
+    }
+    frame();
+  });
+}
+
+function computeBeatPulse() {
+  const beatMs = 60000 / 142;
+  const phase = (performance.now() % beatMs) / beatMs;
+  return Math.pow(1 - phase, 2);
+}
+
+function drawVideoShot(video, meta, t01, beatPulse, idx, total) {
+  // Black backdrop
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  const ready = video.readyState >= 2 && video.videoWidth > 0;
+
+  // Camera shake on beat
+  const shakeMag = beatPulse * 6;
+  const shx = (Math.random() - 0.5) * shakeMag;
+  const shy = (Math.random() - 0.5) * shakeMag;
+  // Slow zoom across shot, with beat punch
+  const baseZoom = 1.05 + t01 * 0.18;
+  const zoom = baseZoom * (1 + beatPulse * 0.05);
+
+  ctx.save();
+  ctx.translate(W/2 + shx, H/2 + shy);
+  ctx.scale(zoom, zoom);
+  ctx.translate(-W/2, -H/2);
+
+  // Saturation/contrast bump on the live footage
+  if (ready) {
+    ctx.filter = 'saturate(1.5) contrast(1.25) brightness(1.05)';
+    ctx.drawImage(video, 0, 0, W, H);
+    ctx.filter = 'none';
+  }
+
+  // Chromatic aberration — red shifted left, cyan shifted right, additive
+  if (ready) {
+    const split = 6 + beatPulse * 10;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.42;
+    ctx.filter = 'sepia(1) saturate(8) hue-rotate(-50deg)';
+    ctx.drawImage(video, -split, 0, W, H);
+    ctx.filter = 'sepia(1) saturate(8) hue-rotate(180deg)';
+    ctx.drawImage(video,  split, 0, W, H);
+    ctx.filter = 'none';
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // Speed lines streaking down
+  ctx.strokeStyle = `rgba(255,255,255,${0.06 + beatPulse * 0.18})`;
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 14; i++) {
+    const sy = (i * 47 + (performance.now() / 4)) % H;
+    ctx.beginPath();
+    ctx.moveTo(-20, sy);
+    ctx.lineTo(W + 20, sy + (Math.random() - 0.5) * 4);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // Occasional glitch slice
+  if (ready && Math.random() < 0.06) {
+    const sliceY = Math.random() * H;
+    const sliceH = 12 + Math.random() * 18;
+    const vh = video.videoHeight;
+    ctx.drawImage(
+      video,
+      0, sliceY * vh / H,
+      video.videoWidth, sliceH * vh / H,
+      (Math.random() - 0.5) * 30, sliceY,
+      W, sliceH
+    );
+  }
+
+  // Big text caption
+  drawHypeText(meta.caption, meta.color, t01, beatPulse);
+
+  // Shot indicator pill
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(W - 96, H - 36, 80, 22);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(`SHOT ${idx + 1}/${total}`, W - 88, H - 21);
+}
+
+function drawEditChrome(beatPulse) {
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+
+  // Vignette pulses on beat
+  const vg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.25, W/2, H/2, Math.max(W,H)*0.7);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, `rgba(0,0,0,${0.55 + beatPulse * 0.2})`);
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, 0, W, H);
+
+  // BEST MOMENTS watermark
+  ctx.font = 'bold 14px monospace';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText('► BEST MOMENTS', 18, 28);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillText('#brrawl  #phonk  #edit', 18, 48);
+
+  // Recording dot pulses with beat
+  ctx.beginPath();
+  ctx.arc(W - 28, 32, 6, 0, Math.PI*2);
+  ctx.fillStyle = `rgba(255,80,80,${0.4 + beatPulse * 0.6})`;
+  ctx.fill();
 }
 
 function startRecording() {
@@ -651,27 +909,15 @@ function onPlayerKill(killer, victim, bullet) {
 }
 
 function captureSnapshot(killer, victim, caption, color) {
+  // In-game polaroid still uses the snapshot state.
   snapshot = { t: 0, life: 160, caption, color };
-
-  // Capture a wide-frame moment for the post-game edit. Canvas currently
-  // shows the previous frame's render, so victim is still visible.
-  const minX = Math.min(killer.x, victim.x) - 140;
-  const maxX = Math.max(killer.x, victim.x) + 140;
-  const minY = Math.min(killer.y, victim.y) - 100;
-  const maxY = Math.max(killer.y, victim.y) + 100;
-  let srcW = Math.max(maxX - minX, 360);
-  let srcH = Math.max(maxY - minY, 260);
-  let sx = Math.max(0, Math.min(W - srcW, minX));
-  let sy = Math.max(0, Math.min(H - srcH, minY));
-  if (srcW > W) { srcW = W; sx = 0; }
-  if (srcH > H) { srcH = H; sy = 0; }
-
-  const off = document.createElement('canvas');
-  off.width = W;
-  off.height = H;
-  off.getContext('2d').drawImage(canvas, sx, sy, srcW, srcH, 0, 0, W, H);
-
-  moments.push({ image: off, caption, color });
+  // Tag the kill timestamp; the post-match edit will seek the recorded
+  // match video to this moment and apply effects on the live footage.
+  killTimes.push({
+    time: performance.now() - matchStartMs,
+    caption,
+    color
+  });
 }
 
 function spawnParticles(x, y, color, n) {
@@ -1245,131 +1491,6 @@ function drawEpic() {
   if (epic.t >= epic.life) epic = null;
 }
 
-function drawEdit() {
-  // Phases: intro (~2s) -> shots (~2.5s each) -> outro (~2s)
-  const introF = 130;
-  const shotF  = 150;
-  const outroF = 130;
-  const totalShotsF = shotF * moments.length;
-  const totalF = introF + totalShotsF + outroF;
-
-  if (editFrame >= totalF) {
-    editing = false;
-    stopPhonk();
-    stopRecording();
-    if (editPending) showFinalOverlay(editPending.msg, editPending.win);
-    return;
-  }
-
-  // Beat sync — 142 BPM ≈ 25.4 frames per beat at 60fps
-  const beatLen = 25;
-  const beatF = (editFrame % beatLen) / beatLen;
-  const beatPulse = Math.pow(1 - beatF, 2);    // 1 at beat, decays
-
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, W, H);
-
-  if (editFrame < introF) {
-    drawIntroCard(editFrame / introF, beatPulse);
-  } else if (editFrame < introF + totalShotsF) {
-    const shotIdx = Math.floor((editFrame - introF) / shotF);
-    const shotT  = ((editFrame - introF) % shotF) / shotF;
-    drawShot(moments[shotIdx], shotT, beatPulse, shotIdx);
-  } else {
-    drawOutroCard((editFrame - introF - totalShotsF) / outroF, beatPulse);
-  }
-
-  // Scan lines on top of everything
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
-
-  // Vignette
-  const vg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.25, W/2, H/2, Math.max(W,H)*0.7);
-  vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, `rgba(0,0,0,${0.55 + beatPulse * 0.2})`);
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, W, H);
-
-  // BEST MOMENTS watermark
-  ctx.font = 'bold 14px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillText('► BEST MOMENTS', 18, 28);
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.fillText(`#brrawl  #phonk  #edit`, 18, 48);
-
-  // BPM dot blink
-  ctx.beginPath();
-  ctx.arc(W - 28, 32, 6, 0, Math.PI*2);
-  ctx.fillStyle = `rgba(255,80,80,${0.4 + beatPulse * 0.6})`;
-  ctx.fill();
-
-  editFrame++;
-}
-
-function drawShot(moment, t01, beatPulse, shotIdx) {
-  const img = moment.image;
-  // small camera shake on each beat
-  const shakeMag = beatPulse * 6;
-  const shx = (Math.random() - 0.5) * shakeMag;
-  const shy = (Math.random() - 0.5) * shakeMag;
-  // slow zoom across shot + punch on beat
-  const baseZoom = 1.05 + t01 * 0.18;
-  const zoom = baseZoom * (1 + beatPulse * 0.05);
-
-  ctx.save();
-  ctx.translate(W/2 + shx, H/2 + shy);
-  ctx.scale(zoom, zoom);
-  ctx.translate(-W/2, -H/2);
-
-  // Saturation + contrast bump on the underlying frame
-  ctx.filter = 'saturate(1.5) contrast(1.25) brightness(1.05)';
-  ctx.drawImage(img, 0, 0, W, H);
-  ctx.filter = 'none';
-
-  // Chromatic aberration: red shifted left, blue shifted right, additive
-  const split = 6 + beatPulse * 10;
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.42;
-  ctx.filter = 'sepia(1) saturate(8) hue-rotate(-50deg)';   // ~red
-  ctx.drawImage(img, -split, 0, W, H);
-  ctx.filter = 'sepia(1) saturate(8) hue-rotate(180deg)';   // ~cyan/blue
-  ctx.drawImage(img,  split, 0, W, H);
-  ctx.filter = 'none';
-  ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = 'source-over';
-
-  // Speed lines
-  ctx.strokeStyle = `rgba(255,255,255,${0.06 + beatPulse * 0.18})`;
-  ctx.lineWidth = 2;
-  for (let i = 0; i < 14; i++) {
-    const sy = (i * 47 + (editFrame * 6)) % H;
-    ctx.beginPath();
-    ctx.moveTo(-20, sy);
-    ctx.lineTo(W + 20, sy + (Math.random() - 0.5) * 4);
-    ctx.stroke();
-  }
-
-  ctx.restore();
-
-  // Glitch frame: occasional horizontal slice
-  if ((editFrame % 53) < 4) {
-    const sliceY = Math.random() * H;
-    const sliceH = 12 + Math.random() * 18;
-    ctx.drawImage(img, 0, sliceY, W, sliceH, (Math.random() - 0.5) * 30, sliceY, W, sliceH);
-  }
-
-  // Big text caption
-  drawHypeText(moment.caption, moment.color, t01, beatPulse);
-
-  // shot index pill
-  ctx.font = 'bold 12px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(W - 96, H - 36, 80, 22);
-  ctx.fillStyle = '#fff';
-  ctx.fillText(`SHOT ${shotIdx + 1}/${moments.length}`, W - 88, H - 21);
-}
 
 function parseAccents(text) {
   const parts = [];
@@ -1573,11 +1694,7 @@ function draw() {
 }
 
 function loop() {
-  if (editing) {
-    drawEdit();
-    requestAnimationFrame(loop);
-    return;
-  }
+  if (editing) return;        // edit pipeline drives its own RAF loop
   if (!running) return;
   update();
   draw();
