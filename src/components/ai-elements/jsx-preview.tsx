@@ -51,7 +51,7 @@ const matchJsxTag = (code: string) => {
     return null;
   }
 
-  const [fullMatch, tagName, attributes, selfClosing] = match;
+  const [fullMatch, tagName = "", attributes = "", selfClosing] = match;
 
   let type: "self-closing" | "closing" | "opening";
   if (selfClosing) {
@@ -117,7 +117,8 @@ const completeJsxTag = (code: string) => {
   return (
     result +
     stack
-      .toReversed()
+      .slice()
+      .reverse()
       .map((tag) => `</${tag}>`)
       .join("")
   );

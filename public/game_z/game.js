@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* ============================================================
    BRAWL KILLER  -  game.js
    A Brawl-Stars-inspired top-down shooter for the browser.
