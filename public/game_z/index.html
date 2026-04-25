@@ -27,6 +27,10 @@
     box-shadow:
       inset 0 0 0 3px rgba(255,255,255,0.06),
       0 0 0 4px rgba(255,255,255,0.04);
+    max-width: 100%;
+    max-height: 100vh;
+    height: auto;
+    width: auto;
   }
 
   #overlay {
@@ -96,6 +100,7 @@
 <body>
 <div id="wrap">
   <canvas id="game" width="900" height="640"></canvas>
+  <canvas id="edit" width="720" height="1280" style="display:none;"></canvas>
   <div id="hud">
     <div class="badge blue" id="blueBadge">BLUE 3</div>
     <div class="badge hp"   id="hpBadge">HP 80</div>
@@ -111,16 +116,34 @@
   </div>
 </div>
 <script>
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+// Two canvases: landscape gameplay + vertical 9:16 edit. We swap which one
+// the rest of the code targets by reassigning canvas/ctx/W/H during edit.
+const gameCanvas = document.getElementById('game');
+const gameCtx    = gameCanvas.getContext('2d');
+const editCanvas = document.getElementById('edit');
+const editCtx    = editCanvas.getContext('2d');
+let canvas = gameCanvas;
+let ctx    = gameCtx;
+let W = gameCanvas.width, H = gameCanvas.height;
+const GAME_W = gameCanvas.width, GAME_H = gameCanvas.height;
+const EDIT_W = editCanvas.width, EDIT_H = editCanvas.height;
+function enterEditView() {
+  canvas = editCanvas; ctx = editCtx; W = EDIT_W; H = EDIT_H;
+  gameCanvas.style.display = 'none';
+  editCanvas.style.display = 'block';
+}
+function exitEditView() {
+  canvas = gameCanvas; ctx = gameCtx; W = GAME_W; H = GAME_H;
+  editCanvas.style.display = 'none';
+  gameCanvas.style.display = '';
+}
+
 const overlay = document.getElementById('overlay');
 const startBtn = document.getElementById('startBtn');
 const shareBtn = document.getElementById('shareBtn');
 const blueBadge = document.getElementById('blueBadge');
 const redBadge  = document.getElementById('redBadge');
 const hpBadge   = document.getElementById('hpBadge');
-
-const W = canvas.width, H = canvas.height;
 const keys = {};
 const mouse = { x: W/2, y: H/2, down: false };
 let units, bullets, particles, shake, t, running = false;
@@ -252,6 +275,7 @@ function start() {
   snapshot = null;
   matchOver = false;
   matchResult = false;
+  exitEditView();
   killTimes = [];
   matchChunks = [];
   recordedMatchBlob = null;
@@ -367,19 +391,46 @@ function setupPixiForEdit(video) {
 
   pixiVideoTex = PIXI.Texture.from(video);
   pixiSprite = new PIXI.Sprite(pixiVideoTex);
-  pixiSprite.width = W;
-  pixiSprite.height = H;
+  // Cover-crop the landscape source into the vertical canvas.
+  const srcW = video.videoWidth || GAME_W;
+  const srcH = video.videoHeight || GAME_H;
+  const srcAspect = srcW / srcH;
+  const dstAspect = W / H;
+  let dw, dh, dx, dy;
+  if (srcAspect > dstAspect) {
+    dh = H; dw = H * srcAspect; dx = (W - dw) / 2; dy = 0;
+  } else {
+    dw = W; dh = W / srcAspect; dx = 0; dy = (H - dh) / 2;
+  }
+  pixiSprite.x = dx;
+  pixiSprite.y = dy;
+  pixiSprite.width = dw;
+  pixiSprite.height = dh;
   pixiApp.stage.addChild(pixiSprite);
 
   const F = (PIXI && PIXI.filters) || {};
+  // Cinematic teal-and-orange grade via ColorMatrixFilter.
+  let cmf = null;
+  if (PIXI.filters && PIXI.filters.ColorMatrixFilter) {
+    cmf = new PIXI.filters.ColorMatrixFilter();
+    cmf.matrix = [
+       1.10, 0.00, -0.05, 0, 0,
+       0.00, 0.92,  0.04, 0, 0,
+      -0.05, 0.05,  1.10, 0, 0,
+       0,    0,     0,    1, 0
+    ];
+    cmf.alpha = 1;
+  }
   pixiFilters = {
     bloom:    F.AdvancedBloomFilter ? new F.AdvancedBloomFilter({ threshold: 0.5, bloomScale: 0.9, blur: 6 }) : null,
     rgbSplit: F.RGBSplitFilter      ? new F.RGBSplitFilter([6, 0], [0, 0], [-6, 0])                          : null,
     glitch:   F.GlitchFilter        ? new F.GlitchFilter({ slices: 8, offset: 0 })                            : null,
     crt:      F.CRTFilter           ? new F.CRTFilter({ curvature: 1.4, lineWidth: 0.5, lineContrast: 0.16, vignetting: 0.32, vignettingAlpha: 0.6, noise: 0.12, noiseSize: 1.2, time: 0 }) : null,
-    zoom:     F.ZoomBlurFilter      ? new F.ZoomBlurFilter({ strength: 0, center: [W/2, H/2], innerRadius: 60, radius: -1 }) : null
+    zoom:     F.ZoomBlurFilter      ? new F.ZoomBlurFilter({ strength: 0, center: [W/2, H/2], innerRadius: 60, radius: -1 }) : null,
+    grade:    cmf
   };
   const stack = [];
+  if (pixiFilters.grade)    stack.push(pixiFilters.grade);
   if (pixiFilters.bloom)    stack.push(pixiFilters.bloom);
   if (pixiFilters.rgbSplit) stack.push(pixiFilters.rgbSplit);
   if (pixiFilters.glitch)   stack.push(pixiFilters.glitch);
@@ -446,6 +497,9 @@ async function runEditSequence() {
     setTimeout(finish, 2500);
   });
 
+  // Switch the canvas to vertical 9:16 for the edit. PIXI must be
+  // created AFTER this so it picks up the new dimensions.
+  enterEditView();
   setupPixiForEdit(video);
 
   await runEditCard('intro', 1900);
@@ -459,6 +513,7 @@ async function runEditSequence() {
 
   teardownPixi();
   try { URL.revokeObjectURL(video.src); } catch (_) {}
+  exitEditView();
 }
 
 async function runEditCard(kind, durMs) {
@@ -581,21 +636,26 @@ function drawShotFrame(phase, video, meta, t01, beatPulse, idx, total) {
   });
 
   if (!pxOk && video.readyState >= 2 && video.videoWidth > 0) {
-    // Fallback: 2D-only path
+    // Fallback: 2D-only path with cover-crop for vertical canvas.
+    const sa = video.videoWidth / video.videoHeight;
+    const da = W / H;
+    let dw, dh, dx, dy;
+    if (sa > da) { dh = H; dw = H * sa; dx = (W - dw) / 2; dy = 0; }
+    else         { dw = W; dh = W / sa; dx = 0; dy = (H - dh) / 2; }
     ctx.save();
     ctx.translate(W/2 + shx, H/2 + shy);
     ctx.scale(zoom, zoom);
     ctx.translate(-W/2, -H/2);
     ctx.filter = 'saturate(1.55) contrast(1.28) brightness(1.05)';
-    ctx.drawImage(video, 0, 0, W, H);
+    ctx.drawImage(video, dx, dy, dw, dh);
     ctx.filter = 'none';
     const split = 6 + beatPulse * 12;
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.42;
     ctx.filter = 'sepia(1) saturate(8) hue-rotate(-50deg)';
-    ctx.drawImage(video, -split, 0, W, H);
+    ctx.drawImage(video, dx - split, dy, dw, dh);
     ctx.filter = 'sepia(1) saturate(8) hue-rotate(180deg)';
-    ctx.drawImage(video,  split, 0, W, H);
+    ctx.drawImage(video, dx + split, dy, dw, dh);
     ctx.filter = 'none';
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
@@ -731,7 +791,7 @@ function drawKineticHype(text, color, phase, t01, beatPulse) {
   }
 
   ctx.save();
-  ctx.translate(W/2, H * 0.32);
+  ctx.translate(W/2, H * 0.24);
   ctx.rotate(-0.04);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -793,29 +853,126 @@ function computeBeatPulse() {
 
 function drawEditChrome(beatPulse) {
   // Scanlines
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
   for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
 
-  // Vignette pulses on beat
-  const vg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.25, W/2, H/2, Math.max(W,H)*0.7);
+  // Vignette pulses on beat (heavier for cinematic feel)
+  const vg = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.28, W/2, H/2, Math.max(W,H)*0.7);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
   vg.addColorStop(1, `rgba(0,0,0,${0.55 + beatPulse * 0.2})`);
   ctx.fillStyle = vg;
   ctx.fillRect(0, 0, W, H);
 
-  // BEST MOMENTS watermark
-  ctx.font = 'bold 14px monospace';
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  ctx.fillText('► BEST MOMENTS', 18, 28);
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.fillText('#brrawl  #phonk  #edit', 18, 48);
+  // Top status bar (mock phone)
+  ctx.fillStyle = 'rgba(0,0,0,0.0)';   // already black bg
+  ctx.font = 'bold 14px system-ui';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  ctx.fillText(`${hh}:${mm}`, W - 18, 28);
+  // signal/wifi/battery dots
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  for (let i = 0; i < 4; i++) ctx.fillRect(18 + i * 6, 22 - i * 1, 4, 6 + i * 2);
 
-  // Recording dot pulses with beat
+  // Username pill (top-left)
+  ctx.font = '900 18px "Trebuchet MS", system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  roundRect(16, 50, 178, 36, 18); ctx.fill();
+  ctx.fillStyle = '#fff';
   ctx.beginPath();
-  ctx.arc(W - 28, 32, 6, 0, Math.PI*2);
+  ctx.arc(34, 68, 13, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1a1a2e';
+  ctx.font = '900 14px system-ui';
+  ctx.textAlign = 'center';
+  ctx.fillText('🔥', 34, 73);
+  ctx.fillStyle = '#fff';
+  ctx.font = '900 15px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillText('@brrawlpro', 54, 67);
+  ctx.fillStyle = '#80d8ff';
+  ctx.font = '600 12px system-ui';
+  ctx.fillText('· Following', 54, 81);
+
+  // Right-side TikTok action rail
+  drawSocialRail(beatPulse);
+
+  // Bottom caption box (mock username + hashtags)
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, H - 130, W, 130);
+  ctx.font = '900 18px system-ui';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('brrawlpro 🔥', 20, H - 96);
+  ctx.font = '600 15px system-ui';
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.fillText('POV: 3v3 went exactly how I expected', 20, H - 70);
+  ctx.fillStyle = '#80d8ff';
+  ctx.fillText('#brawlstars #fyp #phonk #edit #gg', 20, H - 46);
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.font = '500 12px system-ui';
+  ctx.fillText('♪ original sound — phonk loop', 20, H - 24);
+
+  // Recording dot pulses with beat (top-right corner of action rail)
+  ctx.beginPath();
+  ctx.arc(W - 28, 28, 6, 0, Math.PI*2);
   ctx.fillStyle = `rgba(255,80,80,${0.4 + beatPulse * 0.6})`;
   ctx.fill();
+}
+
+function drawSocialRail(beatPulse) {
+  const x = W - 56;
+  let y = H * 0.38;
+  const items = [
+    { icon: '♥', label: '12.4K', color: '#ff4d6d' },
+    { icon: '💬', label: '342',  color: '#ffffff' },
+    { icon: '🔖', label: '1.1K', color: '#ffffff' },
+    { icon: '↗',  label: 'Share', color: '#ffffff' }
+  ];
+  for (const it of items) {
+    // circle background
+    ctx.beginPath();
+    ctx.arc(x, y, 22, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fill();
+    // icon
+    ctx.font = 'bold 22px system-ui, "Apple Color Emoji", "Segoe UI Emoji"';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = it.color;
+    if (it.icon === '♥') {
+      // beat-pulse heart scale
+      const s = 1 + beatPulse * 0.35;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+      ctx.fillText(it.icon, 0, 0);
+      ctx.restore();
+    } else {
+      ctx.fillText(it.icon, x, y);
+    }
+    // label
+    ctx.font = '700 12px system-ui';
+    ctx.fillStyle = '#fff';
+    ctx.fillText(it.label, x, y + 32);
+    y += 84;
+  }
+  // profile avatar at bottom of rail
+  ctx.beginPath();
+  ctx.arc(x, y, 22, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffd54f';
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.font = 'bold 22px system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillText('🎮', x, y);
 }
 
 function startRecording() {
@@ -943,24 +1100,66 @@ function bassHit(t0, freq) {
   o.start(t0); o.stop(t0 + 0.5);
 }
 
+function vocalStab(t0) {
+  if (!audioCtx) return;
+  const o1 = audioCtx.createOscillator(), o2 = audioCtx.createOscillator();
+  const g = audioCtx.createGain(), f = audioCtx.createBiquadFilter();
+  o1.type = 'square'; o2.type = 'sawtooth';
+  o1.frequency.setValueAtTime(220, t0);
+  o2.frequency.setValueAtTime(330, t0);
+  o1.frequency.exponentialRampToValueAtTime(165, t0 + 0.18);
+  o2.frequency.exponentialRampToValueAtTime(247, t0 + 0.18);
+  f.type = 'lowpass'; f.frequency.value = 1800; f.Q.value = 6;
+  g.gain.setValueAtTime(0.0, t0);
+  g.gain.linearRampToValueAtTime(0.18, t0 + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.4);
+  o1.connect(f); o2.connect(f);
+  f.connect(g).connect(audioMaster || audioCtx.destination);
+  o1.start(t0); o2.start(t0);
+  o1.stop(t0 + 0.42); o2.stop(t0 + 0.42);
+}
+
+function rideHit(t0) {
+  if (!audioCtx) return;
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.18, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = (Math.random() - 0.5) * (1 - i / d.length);
+  const s = audioCtx.createBufferSource(); s.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 9000;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.05, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.18);
+  s.connect(f).connect(g).connect(audioMaster || audioCtx.destination);
+  s.start(t0); s.stop(t0 + 0.2);
+}
+
 function schedulePhonk() {
   if (!phonkPlaying || !audioCtx) return;
   const bpm = 142;
-  const stepDur = 60 / bpm / 4;        // 16th note
-  const lookahead = 16;                 // schedule 16 steps ahead
+  const stepDur = 60 / bpm / 4;          // 16th note
+  const lookahead = 16;
   const startAt = audioCtx.currentTime + 0.05;
-  const bassNotes = [55, 55, 73, 65];   // 4-bar bass walk
+  const bassNotes = [55, 55, 73, 65, 55, 49, 73, 55];   // 8-bar walk
   for (let i = 0; i < lookahead; i++) {
-    const stepIdx = (phonkBeatStep + i) % 64;
+    const stepIdx = (phonkBeatStep + i) % 128;
     const tt = startAt + i * stepDur;
     const beat = stepIdx % 16;
+    const bar  = Math.floor(stepIdx / 16);
+    // Backbeat
     if (beat === 0 || beat === 8) kickHit(tt);
     if (beat === 4 || beat === 12) snareHit(tt);
+    // Hi-hats every 8th + extra ghost on 12th
     if (beat % 2 === 0) hatHit(tt, beat === 0);
-    if (beat === 0)  bassHit(tt, bassNotes[Math.floor(stepIdx / 16) % bassNotes.length]);
-    if (beat === 10) bassHit(tt, bassNotes[Math.floor(stepIdx / 16) % bassNotes.length] * 1.12);
+    if (beat === 14) hatHit(tt, false);
+    // Ride pulse on every beat (subtle texture)
+    if (beat % 4 === 0) rideHit(tt);
+    // Bass walk
+    if (beat === 0)  bassHit(tt, bassNotes[bar % bassNotes.length]);
+    if (beat === 10) bassHit(tt, bassNotes[bar % bassNotes.length] * 1.12);
+    // Vocal stab on bar accents (downbeat of every other bar)
+    if (beat === 0 && bar % 2 === 1) vocalStab(tt);
   }
-  phonkBeatStep = (phonkBeatStep + lookahead) % 64;
+  phonkBeatStep = (phonkBeatStep + lookahead) % 128;
   phonkTimer = setTimeout(schedulePhonk, lookahead * stepDur * 1000 - 100);
 }
 
@@ -1643,16 +1842,16 @@ function drawSnapshot() {
   }
 
   const ready = reactionImg.naturalWidth > 0;
-  const baseW = 360;
+  const baseW = 150;
   const aspect = ready ? (reactionImg.naturalHeight / reactionImg.naturalWidth) : 0.75;
   const imgW = baseW;
   const imgH = baseW * aspect;
 
-  const padX = 18, capH = 54;
+  const padX = 8, capH = 30;
   const fw = imgW + padX * 2;
   const fh = imgH + capH;
-  const cx = W - fw / 2 - 22 + slideX;
-  const cy = H - fh / 2 - 22;
+  const cx = W - fw / 2 - 12 + slideX;
+  const cy = H - fh / 2 - 12;
 
   ctx.save();
   ctx.translate(cx, cy);
@@ -1690,10 +1889,10 @@ function drawSnapshot() {
   ctx.roundRect(-fw/2 + 8, fh/2 - capH + 6, fw - 16, capH - 14, 10);
   ctx.fill();
 
-  ctx.font = 'bold 26px "Trebuchet MS", system-ui, sans-serif';
+  ctx.font = 'bold 14px "Trebuchet MS", system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.lineWidth = 6;
+  ctx.lineWidth = 3;
   ctx.strokeStyle = '#0d0d1a';
   const plain = snapshot.caption.replace(/[\[\]]/g, '');
   ctx.strokeText(plain, 0, fh/2 - capH/2 + 1);
@@ -1728,8 +1927,8 @@ function drawEpic() {
   }
 
   ctx.save();
-  ctx.translate(W/2 + dx, H * 0.32);
-  ctx.scale(scale, scale);
+  ctx.translate(W/2 + dx, H * 0.16);
+  ctx.scale(scale * 0.55, scale * 0.55);
   ctx.globalAlpha = alpha;
 
   ctx.font = 'bold 64px "Trebuchet MS", system-ui, sans-serif';
@@ -1784,7 +1983,7 @@ function drawHypeText(text, color, t01, beatPulse) {
   if (measured > maxW) fontSize = Math.max(36, Math.floor(fontSize * maxW / measured));
 
   ctx.save();
-  ctx.translate(W/2, H * 0.32);
+  ctx.translate(W/2, H * 0.24);
   ctx.rotate(-0.04);
   ctx.scale(scale, scale);
 

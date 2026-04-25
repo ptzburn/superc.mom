@@ -9,7 +9,7 @@ export default function GameZPage() {
 				src="/game_z/index.html"
 				title="Brrawl Stars"
 				scrolling="no"
-				className="h-[760px] w-[1000px] max-w-full rounded-2xl border-0"
+				className="h-[1340px] w-[760px] max-w-full max-h-screen rounded-2xl border-0"
 				allow="autoplay; fullscreen; clipboard-write"
 			/>
 		</main>
