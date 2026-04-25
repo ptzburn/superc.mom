@@ -120,62 +120,113 @@ function validatePlan(raw: unknown, eventsLength: number): EditPlan {
 	return parsed;
 }
 
-/**
- * Produce a TikTok edit plan for a list of scored gameplay events.
- *
- * - When ANTHROPIC_API_KEY is unset, returns a deterministic mock plan so
- *   the rest of the team can develop offline.
- * - Otherwise calls Claude Haiku 4.5 with prompt caching on the (stable)
- *   system prompt and validates the response against the schema. Falls back
- *   to the mock on any network or validation failure.
- */
-export async function getEditPlan(events: GameEvent[]): Promise<EditPlan> {
-	const apiKey = process.env.ANTHROPIC_API_KEY;
-	if (!apiKey) {
-		return mockEditPlan(events);
-	}
+async function callGroq(events: GameEvent[]): Promise<EditPlan> {
+	const apiKey = process.env.GROQ_API_KEY;
+	if (!apiKey) throw new Error("no GROQ_API_KEY");
 
-	try {
-		const client = new Anthropic({ apiKey });
+	const userPayload = {
+		events: events.map((e, i) => ({ index: i, ...e })),
+		eventCount: events.length,
+	};
 
-		const userPayload = {
-			events: events.map((e, i) => ({ index: i, ...e })),
-			eventCount: events.length,
-		};
-
-		const response = await client.messages.create({
-			model: "claude-haiku-4-5-20251001",
+	const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+		method: "POST",
+		headers: {
+			Authorization: `Bearer ${apiKey}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			model: "llama-3.3-70b-versatile",
+			temperature: 0.7,
 			max_tokens: 700,
-			system: [
-				{
-					type: "text",
-					text: SYSTEM_PROMPT,
-					cache_control: { type: "ephemeral" },
-				},
-			],
+			response_format: { type: "json_object" },
 			messages: [
+				{ role: "system", content: SYSTEM_PROMPT },
 				{
 					role: "user",
 					content: `Here are the scored gameplay events. Return the edit plan JSON only.\n\n${JSON.stringify(userPayload)}`,
 				},
 			],
-		});
+		}),
+	});
 
-		const textBlock = response.content.find(
-			(b): b is Extract<typeof b, { type: "text" }> => b.type === "text",
-		);
-		if (!textBlock) {
-			throw new Error("no text block in Claude response");
-		}
-
-		const jsonText = extractJson(textBlock.text);
-		const parsed = JSON.parse(jsonText);
-		return validatePlan(parsed, events.length);
-	} catch (err) {
-		console.warn(
-			"[ai-editor] falling back to mock plan:",
-			err instanceof Error ? err.message : err,
-		);
-		return mockEditPlan(events);
+	if (!res.ok) {
+		throw new Error(`groq ${res.status}: ${await res.text()}`);
 	}
+	const json = (await res.json()) as {
+		choices?: Array<{ message?: { content?: string } }>;
+	};
+	const content = json.choices?.[0]?.message?.content;
+	if (!content) throw new Error("no content in Groq response");
+
+	const jsonText = extractJson(content);
+	const parsed = JSON.parse(jsonText);
+	return validatePlan(parsed, events.length);
+}
+
+async function callAnthropic(events: GameEvent[]): Promise<EditPlan> {
+	const apiKey = process.env.ANTHROPIC_API_KEY;
+	if (!apiKey) throw new Error("no ANTHROPIC_API_KEY");
+
+	const client = new Anthropic({ apiKey });
+
+	const userPayload = {
+		events: events.map((e, i) => ({ index: i, ...e })),
+		eventCount: events.length,
+	};
+
+	const response = await client.messages.create({
+		model: "claude-haiku-4-5-20251001",
+		max_tokens: 700,
+		system: [
+			{
+				type: "text",
+				text: SYSTEM_PROMPT,
+				cache_control: { type: "ephemeral" },
+			},
+		],
+		messages: [
+			{
+				role: "user",
+				content: `Here are the scored gameplay events. Return the edit plan JSON only.\n\n${JSON.stringify(userPayload)}`,
+			},
+		],
+	});
+
+	const textBlock = response.content.find(
+		(b): b is Extract<typeof b, { type: "text" }> => b.type === "text",
+	);
+	if (!textBlock) throw new Error("no text block in Claude response");
+
+	const jsonText = extractJson(textBlock.text);
+	const parsed = JSON.parse(jsonText);
+	return validatePlan(parsed, events.length);
+}
+
+/**
+ * Produce a TikTok edit plan for a list of scored gameplay events.
+ *
+ * Provider preference: GROQ_API_KEY > ANTHROPIC_API_KEY > deterministic mock.
+ * Falls back to the mock on any network/validation failure.
+ */
+export async function getEditPlan(events: GameEvent[]): Promise<EditPlan> {
+	if (process.env.GROQ_API_KEY) {
+		try { return await callGroq(events); }
+		catch (err) {
+			console.warn(
+				"[ai-editor] groq failed, trying next provider:",
+				err instanceof Error ? err.message : err,
+			);
+		}
+	}
+	if (process.env.ANTHROPIC_API_KEY) {
+		try { return await callAnthropic(events); }
+		catch (err) {
+			console.warn(
+				"[ai-editor] anthropic failed, falling back to mock:",
+				err instanceof Error ? err.message : err,
+			);
+		}
+	}
+	return mockEditPlan(events);
 }
