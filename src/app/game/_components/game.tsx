@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { createMusicEngine, type MusicEngine } from "./music";
 import { createSfxEngine, type SfxEngine } from "./sfx";
 
@@ -1920,6 +1921,37 @@ export default function Game() {
 		paused: false,
 	});
 
+	const submitTelemetry = (preferBeacon = false) => {
+		if (telemetrySentRef.current) return;
+		const state = stateRef.current;
+		if (sessionStartRef.current <= 0) return;
+		if (state.phase === "menu") return;
+		telemetrySentRef.current = true;
+		const duration = Math.max(
+			1,
+			Math.round((Date.now() - sessionStartRef.current) / 1000),
+		);
+		const payload = JSON.stringify({
+			gameSlug: "game",
+			waveReached: state.wave,
+			kills: state.kills,
+			durationSeconds: duration,
+		});
+		if (preferBeacon && typeof navigator !== "undefined" && navigator.sendBeacon) {
+			const blob = new Blob([payload], { type: "application/json" });
+			const sent = navigator.sendBeacon("/api/telemetry", blob);
+			if (sent) return;
+		}
+		void fetch("/api/telemetry", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: payload,
+			keepalive: preferBeacon,
+		}).catch(() => {
+			// Ignore failures here; avoid duplicate retries after unload.
+		});
+	};
+
 	useEffect(() => {
 		musicRef.current = createMusicEngine();
 		sfxRef.current = createSfxEngine();
@@ -2054,20 +2086,23 @@ export default function Game() {
 
 	useEffect(() => {
 		if (hud.phase === "gameover" && !telemetrySentRef.current) {
-			telemetrySentRef.current = true;
-			const duration = Math.round((Date.now() - sessionStartRef.current) / 1000);
-			void fetch("/api/telemetry", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					gameSlug: "game",
-					waveReached: hud.wave,
-					kills: hud.kills,
-					durationSeconds: duration,
-				}),
-			});
+			submitTelemetry();
 		}
-	}, [hud.phase, hud.wave, hud.kills]);
+	}, [hud.phase]);
+
+	useEffect(() => {
+		const onPageHide = () => submitTelemetry(true);
+		const onVisibilityChange = () => {
+			if (document.visibilityState === "hidden") onPageHide();
+		};
+		window.addEventListener("pagehide", onPageHide);
+		document.addEventListener("visibilitychange", onVisibilityChange);
+		return () => {
+			onPageHide();
+			window.removeEventListener("pagehide", onPageHide);
+			document.removeEventListener("visibilitychange", onVisibilityChange);
+		};
+	}, []);
 
 	const startGame = () => {
 		const s = createInitialState();
@@ -2107,6 +2142,13 @@ export default function Game() {
 					/>
 				</div>
 				<div className="flex w-full min-w-0 items-center gap-2 sm:max-w-[22rem] sm:gap-3">
+					<Link
+						className="shrink-0 rounded-full border-[#143252] border-[3px] bg-gradient-to-b from-[#7cc0ff] to-[#2e74dd] px-3 py-2 font-extrabold text-[#102030] text-xs shadow-[0_3px_0_#0a1c30] active:translate-y-px"
+						href="/"
+						onClick={() => submitTelemetry(true)}
+					>
+						Dashboard
+					</Link>
 					<button
 						aria-label={muted ? "Unmute" : "Mute"}
 						className="shrink-0 rounded-full border-[#143252] border-[3px] bg-gradient-to-b from-[#5aa8ff] to-[#1e5fd0] px-2.5 py-2 font-extrabold text-[#102030] text-xs shadow-[0_3px_0_#0a1c30] active:translate-y-px"
@@ -2199,6 +2241,13 @@ export default function Game() {
 						<button className={brawlBtn} onClick={startGame} type="button">
 							PLAY AGAIN
 						</button>
+						<Link
+							className="mt-3 inline-flex rounded-full border-4 border-[#143252] bg-gradient-to-b from-[#7cc0ff] to-[#2e74dd] px-8 py-2.5 font-extrabold text-[#102840] text-base shadow-[0_4px_0_#0a1c30,0_8px_18px_rgba(0,0,0,0.3)] transition-transform hover:brightness-105 active:translate-y-1 active:shadow-[0_2px_0_#0a1c30]"
+							href="/"
+							onClick={() => submitTelemetry(true)}
+						>
+							BACK TO DASHBOARD
+						</Link>
 					</Overlay>
 				)}
 
