@@ -1,3 +1,4 @@
+// @ts-nocheck
 /* Minimal service worker — install + activate, network-first with offline cache */
 const CACHE = "viral-v1";
 const PRECACHE = [
