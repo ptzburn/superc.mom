@@ -3,13 +3,12 @@
 import type { ReactNode } from "react";
 
 // Screen rect inside /public/mockup/iphone-15-black-portrait.png (1419x2796).
-// Tuned to match the visible glass area of the mockup. If the mockup PNG
-// changes, retune these four numbers — nothing else.
-const SCREEN_TOP_PCT = 4.0; // top inset in portrait
-const SCREEN_LEFT_PCT = 7.5; // left inset in portrait
-const SCREEN_WIDTH_PCT = 85.0; // screen width in portrait
-const SCREEN_HEIGHT_PCT = 92.0; // screen height in portrait
-const SCREEN_RADIUS_PX = 38; // matches the visible glass corner radius
+// Tuned per orientation — the rotated PNG has slightly asymmetric bezel
+// which made the previous mirror-of-portrait coords overflow the visible
+// glass on the right.
+const PORTRAIT = { top: 4.0, left: 7.5, width: 85.0, height: 92.0 };
+const LANDSCAPE = { top: 7.8, left: 5.0, width: 90.0, height: 84.4 };
+const SCREEN_RADIUS_PX = 38;
 
 type Orientation = "landscape" | "portrait";
 
@@ -36,23 +35,13 @@ export function IPhoneFrame({
 			{/* SCREEN — content paints here, behind the mockup PNG */}
 			<div
 				className="absolute overflow-hidden bg-black"
-				style={
-					isLandscape
-						? {
-								top: `${SCREEN_LEFT_PCT}%`,
-								left: `${SCREEN_TOP_PCT}%`,
-								width: `${SCREEN_HEIGHT_PCT}%`,
-								height: `${SCREEN_WIDTH_PCT}%`,
-								borderRadius: SCREEN_RADIUS_PX,
-							}
-						: {
-								top: `${SCREEN_TOP_PCT}%`,
-								left: `${SCREEN_LEFT_PCT}%`,
-								width: `${SCREEN_WIDTH_PCT}%`,
-								height: `${SCREEN_HEIGHT_PCT}%`,
-								borderRadius: SCREEN_RADIUS_PX,
-							}
-				}
+				style={{
+					top: `${(isLandscape ? LANDSCAPE : PORTRAIT).top}%`,
+					left: `${(isLandscape ? LANDSCAPE : PORTRAIT).left}%`,
+					width: `${(isLandscape ? LANDSCAPE : PORTRAIT).width}%`,
+					height: `${(isLandscape ? LANDSCAPE : PORTRAIT).height}%`,
+					borderRadius: SCREEN_RADIUS_PX,
+				}}
 			>
 				{children}
 			</div>
