@@ -32,7 +32,7 @@ export async function GET() {
 
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
-		if (!entry.name.startsWith("game")) continue;
+		if (!entry.name.startsWith("game") && entry.name !== "viral") continue;
 
 		const pagePath = path.join(appDir, entry.name, "page.tsx");
 		try {
