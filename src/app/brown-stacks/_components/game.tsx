@@ -303,30 +303,46 @@ export default function Game() {
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
+		console.log("[canvas-init] useEffect fired, canvas=", canvas);
 		if (!canvas) return;
 		const ctx = canvas.getContext("2d");
+		console.log("[canvas-init] ctx=", ctx);
 		if (!ctx) return;
 
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
+		console.log("[canvas-init] dpr=", dpr, "innerWidth=", window.innerWidth, "innerHeight=", window.innerHeight);
 
-		// Size the backing buffer to match the canvas's *displayed* size every
-		// time it changes, then map arena coords (0..ARENA_W, 0..ARENA_H) onto
-		// the full backing buffer. Falls back to the parent's box if the
-		// canvas's own rect is zero (h-full sometimes reports 0 mid-layout).
+		let resizeTickCount = 0;
 		const resizeCanvas = () => {
 			const rect = canvas.getBoundingClientRect();
 			const parent = canvas.parentElement;
 			const pRect = parent?.getBoundingClientRect();
 			const cssW = rect.width || pRect?.width || window.innerWidth;
 			const cssH = rect.height || pRect?.height || window.innerHeight;
-			// Lock the canvas's CSS box explicitly so it cannot collapse to
-			// 0 when h-full's containing block is ambiguous mid-layout.
 			canvas.style.width = `${cssW}px`;
 			canvas.style.height = `${cssH}px`;
 			const w = Math.max(1, Math.round(cssW * dpr));
 			const h = Math.max(1, Math.round(cssH * dpr));
 			if (canvas.width !== w) canvas.width = w;
 			if (canvas.height !== h) canvas.height = h;
+			if (resizeTickCount < 3) {
+				console.log(
+					"[canvas-resize]",
+					"canvasRect=",
+					rect.width,
+					rect.height,
+					"parentRect=",
+					pRect?.width,
+					pRect?.height,
+					"→ backing=",
+					w,
+					h,
+					"cssBox=",
+					cssW,
+					cssH,
+				);
+				resizeTickCount++;
+			}
 		};
 		resizeCanvas();
 		const ro = new ResizeObserver(resizeCanvas);
@@ -399,18 +415,30 @@ export default function Game() {
 		window.addEventListener("blur", onBlur);
 		canvas.addEventListener("contextmenu", onContextMenu);
 
+		let frameCount = 0;
 		const loop = (now: number) => {
 			const dt = (now - last) / 1000;
 			last = now;
 			const s = stateRef.current;
-			// Resize check on every frame — ResizeObserver can miss the
-			// initial layout pass, leaving the backing buffer at the
-			// HTMLCanvas default of 300×150. Idempotent when nothing changed.
 			resizeCanvas();
-			// Reset base transform: arena coords → full backing buffer.
-			// render() uses ctx.save()/restore() around its drawing so it
-			// trusts that the current transform on entry is the arena map.
 			ctx.setTransform(canvas.width / ARENA_W, 0, 0, canvas.height / ARENA_H, 0, 0);
+			if (frameCount < 3) {
+				console.log(
+					"[loop] frame=",
+					frameCount,
+					"phase=",
+					s.phase,
+					"canvas.width=",
+					canvas.width,
+					"canvas.height=",
+					canvas.height,
+					"transform sx=",
+					canvas.width / ARENA_W,
+					"sy=",
+					canvas.height / ARENA_H,
+				);
+				frameCount++;
+			}
 			update(s, dt);
 			render(ctx, s);
 
