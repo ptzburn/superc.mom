@@ -63,6 +63,14 @@
       "kills": 8,
       "durationSeconds": 13,
       "createdAt": "2026-04-26T04:06:15.311Z"
+    },
+    {
+      "id": "3a3e74b7-e6ef-4df6-bb3e-b9685352a2a6",
+      "gameSlug": "brown-stacks",
+      "waveReached": 1,
+      "kills": 8,
+      "durationSeconds": 79,
+      "createdAt": "2026-04-26T04:10:43.229Z"
     }
   ],
   "analyses": [

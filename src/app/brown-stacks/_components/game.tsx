@@ -1085,7 +1085,7 @@ function MoodOverlay({
 }) {
 	return (
 		<div
-			className="absolute inset-0 z-40 flex flex-col items-center justify-center overflow-hidden px-6 py-8"
+			className="absolute inset-0 z-40 overflow-hidden"
 			style={{
 				background: `radial-gradient(ellipse at 60% 40%, ${mood.bgDeep} 0%, #000 80%)`,
 				borderRadius: 38,
@@ -1105,7 +1105,7 @@ function MoodOverlay({
 								: { bottom: 16, right: 16 };
 				return (
 					<svg
-						className="absolute"
+						className="absolute z-10"
 						height={20}
 						key={p}
 						style={{ ...pos, transform: flip }}
@@ -1122,13 +1122,17 @@ function MoodOverlay({
 				);
 			})}
 			<div
-				className="pointer-events-none absolute"
+				className="pointer-events-none absolute z-10"
 				style={{
 					inset: 0,
 					background: `linear-gradient(180deg, transparent 0%, ${mood.surface}30 50%, transparent 100%)`,
 				}}
 			/>
-			<div className="relative">{children}</div>
+			<div className="absolute inset-0 overflow-y-auto">
+				<div className="flex min-h-full flex-col items-center justify-center px-6 py-8">
+					<div className="relative">{children}</div>
+				</div>
+			</div>
 		</div>
 	);
 }

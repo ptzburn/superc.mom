@@ -23,42 +23,47 @@ type AnalyticsStore = {
 	analyses: StoredAnalysis[];
 };
 
-const STORE_PATH = path.join(process.cwd(), "data", "analytics.json");
+// Vercel serverless functions have a read-only filesystem outside /tmp, and
+// /tmp doesn't persist across invocations. For the demo we hold state in
+// module memory and seed once from the bundled data/analytics.json (reads
+// from the bundled deployment are fine — only writes break).
+//
+// Limitations:
+//   - State is lost on cold-start (~5min idle, redeploys).
+//   - If Vercel spins up multiple parallel instances, each has its own copy.
+//   - For real persistence: swap to @vercel/kv, Postgres, or Turso/libSQL.
+const SEED_PATH = path.join(process.cwd(), "data", "analytics.json");
 
-let writeQueue: Promise<void> = Promise.resolve();
+let store: AnalyticsStore | null = null;
+let initPromise: Promise<void> | null = null;
 
 function normalizeGameSlug(gameSlug?: string) {
 	if (!gameSlug) return "brown-stacks";
 	return gameSlug.replace(/^\//, "") || "brown-stacks";
 }
 
-async function ensureStoreFile() {
-	await fs.mkdir(path.dirname(STORE_PATH), { recursive: true });
-	try {
-		await fs.access(STORE_PATH);
-	} catch {
-		const initial: AnalyticsStore = { sessions: [], analyses: [] };
-		await fs.writeFile(STORE_PATH, JSON.stringify(initial, null, 2), "utf8");
-	}
+async function init(): Promise<void> {
+	if (store) return;
+	if (initPromise) return initPromise;
+	initPromise = (async () => {
+		try {
+			const raw = await fs.readFile(SEED_PATH, "utf8");
+			const parsed = JSON.parse(raw) as Partial<AnalyticsStore>;
+			store = {
+				sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
+				analyses: Array.isArray(parsed.analyses) ? parsed.analyses : [],
+			};
+		} catch {
+			store = { sessions: [], analyses: [] };
+		}
+	})();
+	return initPromise;
 }
 
 async function readStore(): Promise<AnalyticsStore> {
-	await ensureStoreFile();
-	const raw = await fs.readFile(STORE_PATH, "utf8");
-	const parsed = JSON.parse(raw) as Partial<AnalyticsStore>;
-	return {
-		sessions: Array.isArray(parsed.sessions) ? parsed.sessions : [],
-		analyses: Array.isArray(parsed.analyses) ? parsed.analyses : [],
-	};
-}
-
-function queueWrite(mutator: (store: AnalyticsStore) => void | Promise<void>) {
-	writeQueue = writeQueue.then(async () => {
-		const store = await readStore();
-		await mutator(store);
-		await fs.writeFile(STORE_PATH, JSON.stringify(store, null, 2), "utf8");
-	});
-	return writeQueue;
+	await init();
+	if (!store) throw new Error("analytics-store init failed");
+	return store;
 }
 
 export async function appendSession(input: {
@@ -67,23 +72,22 @@ export async function appendSession(input: {
 	kills: number;
 	durationSeconds: number;
 }) {
-	await queueWrite((store) => {
-		store.sessions.push({
-			id: crypto.randomUUID(),
-			gameSlug: normalizeGameSlug(input.gameSlug),
-			waveReached: Number(input.waveReached),
-			kills: Number(input.kills),
-			durationSeconds: Number(input.durationSeconds),
-			createdAt: new Date().toISOString(),
-		});
+	const s = await readStore();
+	s.sessions.push({
+		id: crypto.randomUUID(),
+		gameSlug: normalizeGameSlug(input.gameSlug),
+		waveReached: Number(input.waveReached),
+		kills: Number(input.kills),
+		durationSeconds: Number(input.durationSeconds),
+		createdAt: new Date().toISOString(),
 	});
 }
 
 export async function getRecentSessionsByGame(gameSlug?: string, limit = 15) {
 	const target = normalizeGameSlug(gameSlug);
-	const store = await readStore();
-	return store.sessions
-		.filter((s) => s.gameSlug === target)
+	const s = await readStore();
+	return s.sessions
+		.filter((x) => x.gameSlug === target)
 		.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))
 		.slice(0, limit);
 }
@@ -91,13 +95,20 @@ export async function getRecentSessionsByGame(gameSlug?: string, limit = 15) {
 export async function getStatsByGame(gameSlug?: string) {
 	const sessions = await getRecentSessionsByGame(gameSlug, 200);
 	if (sessions.length === 0) {
-		return { totalSessions: 0, avgWave: 0, avgKills: 0, avgDuration: 0, waveDist: {} as Record<number, number> };
+		return {
+			totalSessions: 0,
+			avgWave: 0,
+			avgKills: 0,
+			avgDuration: 0,
+			waveDist: {} as Record<number, number>,
+		};
 	}
 
 	const total = sessions.length;
 	const avgWave = sessions.reduce((s, g) => s + g.waveReached, 0) / total;
 	const avgKills = sessions.reduce((s, g) => s + g.kills, 0) / total;
-	const avgDuration = sessions.reduce((s, g) => s + g.durationSeconds, 0) / total;
+	const avgDuration =
+		sessions.reduce((s, g) => s + g.durationSeconds, 0) / total;
 
 	const waveDist: Record<number, number> = {};
 	for (const s of sessions) {
@@ -112,21 +123,23 @@ export async function appendAnalysis(input: {
 	summary: string;
 	analysisJson: string;
 }) {
-	await queueWrite((store) => {
-		store.analyses.push({
-			id: crypto.randomUUID(),
-			gameSlug: normalizeGameSlug(input.gameSlug),
-			summary: input.summary,
-			analysisJson: input.analysisJson,
-			createdAt: new Date().toISOString(),
-		});
+	const s = await readStore();
+	s.analyses.push({
+		id: crypto.randomUUID(),
+		gameSlug: normalizeGameSlug(input.gameSlug),
+		summary: input.summary,
+		analysisJson: input.analysisJson,
+		createdAt: new Date().toISOString(),
 	});
 }
 
 export async function getLatestAnalysisByGame(gameSlug?: string) {
 	const target = normalizeGameSlug(gameSlug);
-	const store = await readStore();
-	return store.analyses
-		.filter((a) => a.gameSlug === target)
-		.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0] ?? null;
+	const s = await readStore();
+	return (
+		s.analyses
+			.filter((a) => a.gameSlug === target)
+			.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt))[0] ??
+		null
+	);
 }
