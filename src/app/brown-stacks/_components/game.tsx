@@ -311,19 +311,29 @@ export default function Game() {
 
 		// Size the backing buffer to match the canvas's *displayed* size every
 		// time it changes, then map arena coords (0..ARENA_W, 0..ARENA_H) onto
-		// the full backing buffer. This way the game fills whatever container
-		// the canvas is in — desktop iPhone frame OR mobile full-viewport —
-		// and on aspect mismatch the art stretches rather than getting clipped.
+		// the full backing buffer. Falls back to the parent's box if the
+		// canvas's own rect is zero (h-full sometimes reports 0 mid-layout).
 		const resizeCanvas = () => {
 			const rect = canvas.getBoundingClientRect();
-			const w = Math.max(1, Math.round(rect.width * dpr));
-			const h = Math.max(1, Math.round(rect.height * dpr));
+			const parent = canvas.parentElement;
+			const pRect = parent?.getBoundingClientRect();
+			const cssW = rect.width || pRect?.width || window.innerWidth;
+			const cssH = rect.height || pRect?.height || window.innerHeight;
+			// Lock the canvas's CSS box explicitly so it cannot collapse to
+			// 0 when h-full's containing block is ambiguous mid-layout.
+			canvas.style.width = `${cssW}px`;
+			canvas.style.height = `${cssH}px`;
+			const w = Math.max(1, Math.round(cssW * dpr));
+			const h = Math.max(1, Math.round(cssH * dpr));
 			if (canvas.width !== w) canvas.width = w;
 			if (canvas.height !== h) canvas.height = h;
 		};
 		resizeCanvas();
 		const ro = new ResizeObserver(resizeCanvas);
 		ro.observe(canvas);
+		if (canvas.parentElement) ro.observe(canvas.parentElement);
+		window.addEventListener("resize", resizeCanvas);
+		window.addEventListener("orientationchange", resizeCanvas);
 
 		let raf = 0;
 		let last = performance.now();
@@ -428,6 +438,8 @@ export default function Game() {
 		return () => {
 			cancelAnimationFrame(raf);
 			ro.disconnect();
+			window.removeEventListener("resize", resizeCanvas);
+			window.removeEventListener("orientationchange", resizeCanvas);
 			window.removeEventListener("keydown", onKeyDown);
 			window.removeEventListener("keyup", onKeyUp);
 			canvas.removeEventListener("mousemove", onMouseMove);
