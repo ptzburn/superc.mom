@@ -7,11 +7,10 @@ import type { FeatureSnapshot, ViralMoment } from "~/lib/ai-editor/viral";
 import type { ThemeArt } from "~/lib/ai-theme";
 import { ARENA_H, ARENA_W, PLAYER_MAX_HP } from "./constants";
 import { render } from "./draw";
+import { IPhoneFrame } from "./IPhoneFrame";
+import { FONT_DISPLAY, FONT_MONO, MOODS } from "./moods";
 import { createMusicEngine, type MusicEngine } from "./music";
 import {
-	HelpRow,
-	Overlay,
-	StatPill,
 	ThemeField,
 	ViralVerdict,
 } from "./overlays";
@@ -539,131 +538,261 @@ export default function Game() {
 		sfxRef.current?.ensureStarted();
 	};
 
-	const brawlBtn =
-		"relative select-none rounded-full border-4 border-[#143252] bg-gradient-to-b from-[#ffec90] to-[#ffb000] px-10 py-3.5 font-extrabold text-[#102840] text-lg shadow-[0_5px_0_#0a1c30,0_10px_20px_rgba(0,0,0,0.35)] transition-transform before:pointer-events-none before:absolute before:inset-x-3 before:top-1.5 before:h-[38%] before:rounded-t-[999px] before:bg-gradient-to-b before:from-white/50 before:to-transparent after:pointer-events-none after:absolute after:inset-0 after:rounded-full after:ring-1 after:ring-inset after:ring-white/30 hover:brightness-105 active:translate-y-1 active:shadow-[0_2px_0_#0a1c30] sm:px-14 sm:py-4 sm:text-2xl";
+	const M = MOODS.menacing;
 
-	return (
+	const orientation =
+		hud.phase === "gameover" &&
+		videoState.status === "done" &&
+		videoState.blobUrl
+			? "portrait"
+			: "landscape";
+
+	const inner = (
 		<div
-			className="relative select-none rounded-[1.75rem] border-[#f2cc4a] border-[5px] bg-gradient-to-b from-[#3d8ce8] via-[#256fd8] to-[#164a9e] p-2.5 shadow-[0_10px_0_#0c2348,0_18px_40px_rgba(0,0,0,0.45)] sm:rounded-[2rem] sm:p-3.5"
-			style={{ width: Math.min(ARENA_W + 36, 1024) }}
+			className="relative h-full w-full select-none overflow-hidden"
+			style={{
+				background: M.surface,
+				color: M.ink,
+				fontFamily: "var(--font-sans), system-ui, sans-serif",
+				borderRadius: 38,
+			}}
 		>
-			{/* Match info bar (Brawl top strip) */}
-			<div className="mb-2 flex flex-col gap-2 sm:mb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-				<div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
-					<StatPill emoji="🌊" label="WAVE" value={String(hud.wave || "—")} />
-					<StatPill emoji="💀" label="KILLS" value={String(hud.kills)} />
-					<StatPill
-						emoji="🐘"
-						label="SQUAD"
-						value={`${hud.alliesAlive}/${hud.alliesTotal}`}
-					/>
-				</div>
-				<div className="flex w-full min-w-0 items-center gap-2 sm:max-w-[22rem] sm:gap-3">
-					<Link
-						className="shrink-0 rounded-full border-[#143252] border-[3px] bg-gradient-to-b from-[#7cc0ff] to-[#2e74dd] px-3 py-2 font-extrabold text-[#102030] text-xs shadow-[0_3px_0_#0a1c30] active:translate-y-px"
-						href="/"
-						onClick={() => submitTelemetry(true)}
-					>
-						Dashboard
-					</Link>
-					<button
-						aria-label={muted ? "Unmute" : "Mute"}
-						className="shrink-0 rounded-full border-[#143252] border-[3px] bg-gradient-to-b from-[#5aa8ff] to-[#1e5fd0] px-2.5 py-2 font-extrabold text-[#102030] text-xs shadow-[0_3px_0_#0a1c30] active:translate-y-px"
-						onClick={() => setMuted((m) => !m)}
-						type="button"
-					>
-						{muted ? "🔇" : "♪"}
-					</button>
-					<div className="min-w-0 flex-1">
-						<div className="mb-0.5 flex items-center justify-between font-bold text-[#b8dcff] text-[10px] uppercase leading-none tracking-wider sm:text-xs">
-							<span>BRAWLER</span>
-							<span className="text-white tabular-nums">
-								{hud.hp} / {hud.maxHp}
-							</span>
-						</div>
-						<div className="relative h-3.5 overflow-visible rounded-full border-[#f2cc4a] border-[2px] bg-[#0a1830] p-0.5 shadow-[inset_0_2px_4px_rgba(0,0,0,0.5)] sm:h-4">
-							<div
-								className="h-full min-w-0 rounded-full bg-gradient-to-r from-[#00e090] to-[#90f060] shadow-[0_0_8px_rgba(0,255,150,0.6)]"
-								style={{
-									width: `${Math.max(0, Math.min(1, hud.hp / hud.maxHp)) * 100}%`,
-								}}
-							/>
-						</div>
-					</div>
-				</div>
-			</div>
+			<canvas
+				className="absolute inset-0 block h-full w-full"
+				ref={canvasRef}
+				style={{
+					cursor:
+						hud.phase === "playing" && !hud.paused ? "none" : "default",
+					filter:
+						hud.phase === "playing"
+							? "saturate(0.92) contrast(1.06) brightness(0.98)"
+							: "saturate(0.5) brightness(0.7)",
+					borderRadius: 38,
+				}}
+			/>
+
+			<DeviceCorners color={M.accent} />
 
 			<div
-				className="relative overflow-hidden rounded-2xl border-4 border-[#142e58] bg-[#061428] shadow-[inset_0_2px_0_rgba(255,255,255,0.12)]"
-				style={{ width: ARENA_W, height: ARENA_H }}
+				className="pointer-events-none absolute top-0 right-0 left-0 flex flex-col gap-1.5"
+				style={{
+					padding: "10px 24px 18px",
+					background:
+						"linear-gradient(180deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 100%)",
+				}}
 			>
-				<canvas
-					className="block"
-					ref={canvasRef}
+				<div
+					className="flex items-center gap-2"
 					style={{
-						width: ARENA_W,
-						height: ARENA_H,
-						cursor: hud.phase === "playing" && !hud.paused ? "none" : "default",
+						fontFamily: FONT_MONO,
+						fontSize: 9,
+						letterSpacing: "0.18em",
+						color: M.inkDim,
 					}}
-				/>
-
-				{hud.phase === "menu" && (
-					<Overlay>
-						<p className="mb-1 font-extrabold text-[#bfe4ff] text-sm uppercase tracking-[0.2em]">
-							3V3
-						</p>
-						<h1
-							className="mb-1 text-center font-extrabold text-4xl text-white leading-none drop-shadow-[0_4px_0_#0a1c30] sm:text-5xl"
-							style={{ textShadow: "0 0 2px #000, 0 3px 0 #143252" }}
+				>
+					<span
+						style={{
+							width: 6,
+							height: 6,
+							background: M.accent,
+							borderRadius: "50%",
+							boxShadow: `0 0 8px ${M.accent}`,
+						}}
+					/>
+					<span style={{ color: M.ink }}>ARENA.LIVE</span>
+					<span className="pointer-events-auto ml-auto flex items-center gap-2">
+						<Link
+							href="/"
+							onClick={() => submitTelemetry(true)}
+							style={{
+								fontFamily: FONT_MONO,
+								fontSize: 9,
+								letterSpacing: "0.2em",
+								color: M.inkDim,
+								background: "rgba(0,0,0,0.5)",
+								border: `1px solid ${M.inkDim}40`,
+								padding: "2px 8px",
+								textDecoration: "none",
+							}}
 						>
-							ARENA
+							HOME
+						</Link>
+						<button
+							aria-label={muted ? "Unmute music" : "Mute music"}
+							className="cursor-pointer"
+							onClick={() => setMuted((m) => !m)}
+							style={{
+								fontFamily: FONT_MONO,
+								fontSize: 9,
+								letterSpacing: "0.2em",
+								color: muted ? M.inkDim : M.accent,
+								background: "rgba(0,0,0,0.5)",
+								border: `1px solid ${M.inkDim}40`,
+								padding: "2px 8px",
+							}}
+							type="button"
+						>
+							{muted ? "OFF" : "ON"}
+						</button>
+					</span>
+				</div>
+				<div className="flex items-center justify-between gap-2">
+					<HudStat
+						label="WAVE"
+						value={String(hud.wave).padStart(2, "0")}
+						mood={M}
+					/>
+					<HudStat
+						label="KILLS"
+						value={String(hud.kills).padStart(3, "0")}
+						mood={M}
+					/>
+					<HudStat
+						label="SQUAD"
+						value={`${hud.alliesAlive}/${hud.alliesTotal}`}
+						mood={M}
+					/>
+				</div>
+				<HpStrip hp={hud.hp} max={hud.maxHp} mood={M} />
+			</div>
+
+			{hud.phase === "menu" && (
+				<MoodOverlay mood={M}>
+					<div className="text-center">
+						<div
+							style={{
+								fontFamily: FONT_MONO,
+								fontSize: 11,
+								letterSpacing: "0.3em",
+								color: M.inkDim,
+								marginBottom: 18,
+							}}
+						>
+							MISSION 01 · DEFEND
+						</div>
+						<h1
+							style={{
+								fontFamily: FONT_DISPLAY,
+								fontSize: "clamp(36px, 7vw, 80px)",
+								lineHeight: 0.88,
+								color: M.ink,
+								margin: 0,
+								letterSpacing: "-0.01em",
+							}}
+						>
+							ELEPHANTS{" "}
+							<span style={{ color: M.accent, fontStyle: "italic" }}>VS</span>{" "}
+							DONKEYS
 						</h1>
 						<p
-							className="mb-6 max-w-sm text-center font-bold text-[#ffe8a0] text-lg sm:text-xl"
-							style={{ textShadow: "0 2px 0 #0a1c30" }}
+							className="mx-auto mt-6"
+							style={{
+								fontFamily: "var(--font-sans), system-ui, sans-serif",
+								fontSize: 14,
+								color: M.inkDim,
+								maxWidth: 480,
+								lineHeight: 1.55,
+							}}
 						>
-							ELEPHANTS <span className="text-white"> vs </span> DONKEYS
+							Hold the arena with your team. The model is watching for clutch
+							moments — go for them.
 						</p>
-						<p className="mb-6 max-w-md text-center font-semibold text-[#d4ecff] text-sm leading-relaxed sm:text-base">
-							Hold the zone with your team. Wipe the wave before they overrun
-							you!
-						</p>
-						<div className="mb-4 grid w-full max-w-sm grid-cols-2 gap-x-4 gap-y-2 text-left font-bold text-sm text-white sm:gap-y-2.5 sm:text-base">
-							<HelpRow d="move" k="W A S D" />
-							<HelpRow d="aim" k="MOUSE" />
-							<HelpRow d="fire" k="CLICK" />
-							<HelpRow d="pause" k="ESC" />
+						<div
+							className="mx-auto mt-7 grid grid-cols-2 gap-x-10 gap-y-1.5"
+							style={{
+								fontFamily: FONT_MONO,
+								fontSize: 11,
+								letterSpacing: "0.18em",
+								color: M.inkDim,
+								maxWidth: 380,
+							}}
+						>
+							<div>
+								<span style={{ color: M.ink }}>WASD</span> — MOVE
+							</div>
+							<div>
+								<span style={{ color: M.ink }}>MOUSE</span> — AIM
+							</div>
+							<div>
+								<span style={{ color: M.ink }}>LMB</span> — FIRE
+							</div>
+							<div>
+								<span style={{ color: M.ink }}>ESC</span> — PAUSE
+							</div>
 						</div>
 						{!showThemePanel ? (
 							<button
-								className="mb-5 rounded-lg border-2 border-[#143252] bg-gradient-to-b from-[#a36bff] to-[#5a2cb8] px-5 py-2 font-extrabold text-[#fffbe6] text-sm shadow-[0_3px_0_#0a1c30] transition-transform active:translate-y-px"
+								className="mt-8 cursor-pointer"
 								onClick={() => setShowThemePanel(true)}
+								style={{
+									fontFamily: FONT_MONO,
+									fontSize: 11,
+									letterSpacing: "0.22em",
+									background: "transparent",
+									color: M.inkDim,
+									border: `1px solid ${M.inkDim}50`,
+									padding: "8px 18px",
+									cursor: "pointer",
+									marginBottom: 16,
+								}}
 								type="button"
 							>
-								{theme ? `🎨 ${theme.label}` : "🎨 Thematic game"}
+								{theme ? `THEME: ${theme.label}` : "AI THEME"}
 							</button>
 						) : (
-							<div className="mb-5 w-full max-w-md rounded-xl border-2 border-[#143252] bg-[#0a2a50]/70 p-3 text-left">
+							<div
+								className="mx-auto mt-6 w-full max-w-md text-left"
+								style={{
+									background: `${M.surface}cc`,
+									border: `1px solid ${M.inkDim}40`,
+									padding: 16,
+								}}
+							>
 								<div className="mb-2 flex items-center justify-between">
-									<span className="font-extrabold text-[#ffe066] text-xs uppercase tracking-[0.18em]">
-										AI Theme
+									<span
+										style={{
+											fontFamily: FONT_MONO,
+											fontSize: 9,
+											letterSpacing: "0.2em",
+											color: M.accent,
+										}}
+									>
+										AI THEME
 									</span>
 									<div className="flex items-center gap-1.5">
 										{theme && themeStatus === "ready" && (
 											<button
-												className="rounded-md border border-[#143252] bg-[#143252]/60 px-2 py-0.5 font-bold text-[10px] text-[#bfe4ff] uppercase tracking-wider hover:bg-[#143252]"
+												className="cursor-pointer"
 												onClick={clearTheme}
+												style={{
+													fontFamily: FONT_MONO,
+													fontSize: 9,
+													letterSpacing: "0.18em",
+													color: M.inkDim,
+													background: "transparent",
+													border: `1px solid ${M.inkDim}40`,
+													padding: "2px 8px",
+												}}
 												type="button"
 											>
-												Reset
+												RESET
 											</button>
 										)}
 										<button
-											className="rounded-md border border-[#143252] bg-[#143252]/60 px-2 py-0.5 font-bold text-[10px] text-[#bfe4ff] uppercase tracking-wider hover:bg-[#143252]"
+											className="cursor-pointer"
 											onClick={() => setShowThemePanel(false)}
+											style={{
+												fontFamily: FONT_MONO,
+												fontSize: 9,
+												letterSpacing: "0.18em",
+												color: M.inkDim,
+												background: "transparent",
+												border: `1px solid ${M.inkDim}40`,
+												padding: "2px 8px",
+											}}
 											type="button"
 										>
-											Close
+											CLOSE
 										</button>
 									</div>
 								</div>
@@ -685,111 +814,416 @@ export default function Game() {
 									/>
 								</div>
 								<button
-									className="mt-3 w-full rounded-lg border-2 border-[#143252] bg-gradient-to-b from-[#a36bff] to-[#5a2cb8] px-3 py-2 font-extrabold text-[#fffbe6] text-sm shadow-[0_3px_0_#0a1c30] transition-transform active:translate-y-px disabled:opacity-50 disabled:cursor-not-allowed"
+									className="mt-3 w-full cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"
 									disabled={themeStatus === "loading"}
 									onClick={() => void applyTheme()}
+									style={{
+										fontFamily: FONT_DISPLAY,
+										fontSize: 18,
+										letterSpacing: "0.04em",
+										background: M.accent,
+										color: "#000",
+										border: "none",
+										padding: "10px 24px",
+										boxShadow: `0 0 24px ${M.accent}60`,
+									}}
 									type="button"
 								>
 									{themeStatus === "loading"
-										? "Generating…"
+										? "GENERATING..."
 										: theme
-											? "Regenerate Theme"
-											: "Apply Theme"}
+											? "REGENERATE"
+											: "APPLY THEME"}
 								</button>
 								{themeStatus === "ready" && theme && (
-									<p className="mt-2 text-center font-semibold text-[#a8f0c8] text-xs">
-										✓ {theme.label} ·{" "}
+									<p
+										className="mt-2 text-center"
+										style={{
+											fontFamily: FONT_MONO,
+											fontSize: 9,
+											color: M.accent,
+											letterSpacing: "0.18em",
+										}}
+									>
+										{theme.label} ·{" "}
 										{theme.musicMood.replace("phonk_", "phonk · ")}
 									</p>
 								)}
 								{themeStatus === "error" && themeError && (
-									<p className="mt-2 text-center font-semibold text-[#ff8888] text-xs">
+									<p
+										className="mt-2 text-center"
+										style={{
+											fontFamily: FONT_MONO,
+											fontSize: 9,
+											color: M.accent2,
+											letterSpacing: "0.18em",
+										}}
+									>
 										{themeError}
 									</p>
 								)}
 							</div>
 						)}
-						<button className={brawlBtn} onClick={startGame} type="button">
-							PLAY
-						</button>
-					</Overlay>
-				)}
-
-				{hud.phase === "gameover" && (
-					<Overlay>
-						<div className="flex w-full max-w-3xl flex-col items-center gap-4 px-6">
-							<h1 className="font-extrabold text-3xl text-red-400 tracking-tight">
-								OVERRUN
-							</h1>
-							<p className="text-neutral-300 text-sm">
-								Held{" "}
-								<span className="font-bold text-white">{hud.wave}</span> wave
-								{hud.wave === 1 ? "" : "s"} · dropped{" "}
-								<span className="font-bold text-white">{hud.kills}</span> ·{" "}
-								<span className="font-bold text-white">
-									{matchSummary.eventCount}
-								</span>{" "}
-								events,{" "}
-								<span className="font-bold text-white">
-									{matchSummary.snapshotCount}
-								</span>{" "}
-								telemetry samples
-							</p>
-
-							<ViralVerdict
-								editState={editState}
-								matchSummary={matchSummary}
-								onRequestEdit={requestEdit}
-								videoState={videoState}
-								viralState={viralState}
-							/>
-
-							<div className="flex w-full flex-wrap items-center justify-center gap-3 pt-2">
-								<button
-									className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
-									onClick={startGame}
-									type="button"
-								>
-									REDEPLOY
-								</button>
-								<button
-									className="rounded-xl border border-neutral-700 bg-neutral-900 px-5 py-3 font-mono text-[11px] text-neutral-200 uppercase tracking-wider transition hover:border-neutral-600 hover:bg-neutral-800"
-									onClick={downloadTelemetry}
-									type="button"
-								>
-									download telemetry .json
-								</button>
-								<Link
-									className="inline-flex items-center justify-center rounded-xl border-4 border-[#143252] bg-gradient-to-b from-[#7cc0ff] to-[#2e74dd] px-6 py-3 font-extrabold text-[#102030] text-sm shadow-[0_4px_0_#0a1c30] transition-transform hover:brightness-105 active:translate-y-px"
-									href="/"
-									onClick={() => submitTelemetry(true)}
-								>
-									BACK TO DASHBOARD
-								</Link>
-							</div>
-						</div>
-					</Overlay>
-				)}
-
-				{hud.phase === "playing" && hud.paused && (
-					<Overlay>
-						<h1
-							className="mb-6 font-extrabold text-5xl text-white sm:text-6xl"
-							style={{ textShadow: "0 5px 0 #0a1c30" }}
+						<button
+							className="mt-10 cursor-pointer"
+							onClick={startGame}
+							style={{
+								fontFamily: FONT_DISPLAY,
+								fontSize: 36,
+								letterSpacing: "0.04em",
+								background: M.accent,
+								color: "#000",
+								border: "none",
+								padding: "16px 56px",
+								boxShadow: `0 0 40px ${M.accent}80`,
+							}}
+							type="button"
 						>
-							PAUSED
-						</h1>
-						<button className={brawlBtn} onClick={resume} type="button">
-							RESUME
+							START
 						</button>
-					</Overlay>
-				)}
-			</div>
+					</div>
+				</MoodOverlay>
+			)}
 
-			<p className="mt-2 text-center font-bold text-[#a8c8f0] text-xs leading-tight sm:mt-3 sm:text-sm">
-				Click the arena to focus · <span className="text-[#fff6c0]">Esc</span>{" "}
-				to pause
-			</p>
+			{hud.phase === "gameover" && (
+				<MoodOverlay mood={M}>
+					<div className="flex w-full max-w-3xl flex-col items-center gap-4 px-4">
+						<div
+							style={{
+								fontFamily: FONT_MONO,
+								fontSize: 9,
+								letterSpacing: "0.3em",
+								color: M.inkDim,
+								marginBottom: 4,
+							}}
+						>
+							VERDICT — OVERRUN
+						</div>
+						<h1
+							style={{
+								fontFamily: FONT_DISPLAY,
+								fontSize: "clamp(36px, 7vw, 72px)",
+								lineHeight: 0.88,
+								color: M.ink,
+								margin: 0,
+							}}
+						>
+							THE ARENA{" "}
+							<span style={{ color: M.accent2, fontStyle: "italic" }}>
+								FELL.
+							</span>
+						</h1>
+						<p
+							style={{
+								fontFamily: FONT_MONO,
+								fontSize: 11,
+								color: M.inkDim,
+								letterSpacing: "0.15em",
+							}}
+						>
+							WAVE {String(hud.wave).padStart(2, "0")} · KILLS{" "}
+							{String(hud.kills).padStart(3, "0")} ·{" "}
+							{matchSummary.eventCount} EVENTS ·{" "}
+							{matchSummary.snapshotCount} SAMPLES
+						</p>
+
+						<ViralVerdict
+							editState={editState}
+							matchSummary={matchSummary}
+							onRequestEdit={requestEdit}
+							videoState={videoState}
+							viralState={viralState}
+						/>
+
+						<div className="flex w-full flex-wrap items-center justify-center gap-3 pt-2">
+							<button
+								className="cursor-pointer"
+								onClick={startGame}
+								style={{
+									fontFamily: FONT_DISPLAY,
+									fontSize: "clamp(22px, 3vw, 32px)",
+									letterSpacing: "0.04em",
+									background: M.accent,
+									color: "#000",
+									padding: "12px 32px",
+									border: "none",
+									boxShadow: `0 0 40px ${M.accent}80`,
+								}}
+								type="button"
+							>
+								REDEPLOY
+							</button>
+							<button
+								className="cursor-pointer"
+								onClick={downloadTelemetry}
+								style={{
+									fontFamily: FONT_MONO,
+									fontSize: 10,
+									letterSpacing: "0.22em",
+									background: "transparent",
+									color: M.inkDim,
+									border: `1px solid ${M.inkDim}50`,
+									padding: "11px 16px",
+								}}
+								type="button"
+							>
+								TELEMETRY .JSON
+							</button>
+							<Link
+								href="/"
+								onClick={() => submitTelemetry(true)}
+								style={{
+									fontFamily: FONT_MONO,
+									fontSize: 10,
+									letterSpacing: "0.22em",
+									background: "transparent",
+									color: M.inkDim,
+									border: `1px solid ${M.inkDim}50`,
+									padding: "11px 16px",
+									textDecoration: "none",
+								}}
+							>
+								DASHBOARD
+							</Link>
+						</div>
+					</div>
+				</MoodOverlay>
+			)}
+
+			{hud.phase === "playing" && hud.paused && (
+				<MoodOverlay mood={M}>
+					<div className="text-center">
+						<div
+							style={{
+								fontFamily: FONT_MONO,
+								fontSize: 11,
+								letterSpacing: "0.3em",
+								color: M.inkDim,
+								marginBottom: 18,
+							}}
+						>
+							STATE / PAUSED
+						</div>
+						<h1
+							style={{
+								fontFamily: FONT_DISPLAY,
+								fontSize: "clamp(56px, 12vw, 120px)",
+								lineHeight: 0.85,
+								color: M.ink,
+								margin: 0,
+							}}
+						>
+							<span style={{ color: M.accent, fontStyle: "italic" }}>
+								STAND
+							</span>
+							<br />
+							BY.
+						</h1>
+					</div>
+					<button
+						className="mt-10 cursor-pointer"
+						onClick={resume}
+						style={{
+							fontFamily: FONT_DISPLAY,
+							fontSize: 32,
+							letterSpacing: "0.04em",
+							background: M.accent,
+							color: "#000",
+							border: "none",
+							padding: "14px 48px",
+							boxShadow: `0 0 40px ${M.accent}80`,
+						}}
+						type="button"
+					>
+						RESUME
+					</button>
+				</MoodOverlay>
+			)}
+
+			<div
+				className="pointer-events-none absolute right-0 bottom-0 left-0 flex items-center justify-between"
+				style={{
+					padding: "12px 24px 14px",
+					fontFamily: FONT_MONO,
+					fontSize: 8,
+					letterSpacing: "0.18em",
+					color: M.inkDim,
+					background:
+						"linear-gradient(0deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0) 100%)",
+				}}
+			>
+				<span>CLICK · ESC</span>
+				<span>GEMINI · viral</span>
+			</div>
+		</div>
+	);
+
+	return <IPhoneFrame orientation={orientation}>{inner}</IPhoneFrame>;
+}
+
+function DeviceCorners({ color }: { color: string }) {
+	return (
+		<>
+			{(["tl", "tr", "bl", "br"] as const).map((p) => {
+				const flip =
+					(p.includes("r") ? "scaleX(-1) " : "") +
+					(p.includes("b") ? "scaleY(-1)" : "");
+				const pos =
+					p === "tl"
+						? { top: 6, left: 6 }
+						: p === "tr"
+							? { top: 6, right: 6 }
+							: p === "bl"
+								? { bottom: 6, left: 6 }
+								: { bottom: 6, right: 6 };
+				return (
+					<svg
+						className="absolute"
+						height={14}
+						key={p}
+						style={{ ...pos, transform: flip }}
+						width={14}
+					>
+						<title>device-corner</title>
+						<path
+							d="M0 6 L0 0 L6 0"
+							fill="none"
+							stroke={color}
+							strokeWidth={1.5}
+						/>
+					</svg>
+				);
+			})}
+		</>
+	);
+}
+
+function HudStat({
+	label,
+	value,
+	mood,
+}: {
+	label: string;
+	value: string;
+	mood: (typeof MOODS)[keyof typeof MOODS];
+}) {
+	return (
+		<span className="flex items-baseline gap-2">
+			<span style={{ color: mood.inkDim }}>{label}</span>
+			<span
+				style={{
+					color: mood.ink,
+					fontFamily: FONT_DISPLAY,
+					fontSize: 20,
+					lineHeight: 1,
+				}}
+			>
+				{value}
+			</span>
+		</span>
+	);
+}
+
+function HpStrip({
+	hp,
+	max,
+	mood,
+}: {
+	hp: number;
+	max: number;
+	mood: (typeof MOODS)[keyof typeof MOODS];
+}) {
+	const frac = Math.max(0, Math.min(1, hp / max));
+	const color = frac < 0.25 ? mood.accent2 : mood.accent;
+	return (
+		<div
+			className="flex w-full items-center gap-2"
+			style={{
+				fontFamily: FONT_MONO,
+				fontSize: 9,
+				letterSpacing: "0.18em",
+				color: mood.inkDim,
+			}}
+		>
+			<span>HP</span>
+			<span
+				className="relative h-1 flex-1"
+				style={{ background: `${mood.inkDim}40` }}
+			>
+				<span
+					className="absolute top-0 left-0 h-full"
+					style={{
+						width: `${frac * 100}%`,
+						background: color,
+						boxShadow: `0 0 8px ${color}`,
+					}}
+				/>
+			</span>
+			<span
+				style={{
+					color: mood.ink,
+					fontVariantNumeric: "tabular-nums",
+				}}
+			>
+				{hp}/{max}
+			</span>
+		</div>
+	);
+}
+
+function MoodOverlay({
+	mood,
+	children,
+}: {
+	mood: (typeof MOODS)[keyof typeof MOODS];
+	children: React.ReactNode;
+}) {
+	return (
+		<div
+			className="absolute inset-0 z-40 flex flex-col items-center justify-center overflow-hidden px-6 py-8"
+			style={{
+				background: `radial-gradient(ellipse at 60% 40%, ${mood.bgDeep} 0%, #000 80%)`,
+				borderRadius: 38,
+			}}
+		>
+			{(["tl", "tr", "bl", "br"] as const).map((p) => {
+				const flip =
+					(p.includes("r") ? "scaleX(-1) " : "") +
+					(p.includes("b") ? "scaleY(-1)" : "");
+				const pos =
+					p === "tl"
+						? { top: 16, left: 16 }
+						: p === "tr"
+							? { top: 16, right: 16 }
+							: p === "bl"
+								? { bottom: 16, left: 16 }
+								: { bottom: 16, right: 16 };
+				return (
+					<svg
+						className="absolute"
+						height={20}
+						key={p}
+						style={{ ...pos, transform: flip }}
+						width={20}
+					>
+						<title>corner</title>
+						<path
+							d="M0 8 L0 0 L8 0"
+							fill="none"
+							stroke={mood.accent}
+							strokeWidth={1.5}
+						/>
+					</svg>
+				);
+			})}
+			<div
+				className="pointer-events-none absolute"
+				style={{
+					inset: 0,
+					background: `linear-gradient(180deg, transparent 0%, ${mood.surface}30 50%, transparent 100%)`,
+				}}
+			/>
+			<div className="relative">{children}</div>
 		</div>
 	);
 }
