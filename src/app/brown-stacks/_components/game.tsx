@@ -303,36 +303,18 @@ export default function Game() {
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
-		console.log("[canvas-init] useEffect fired, canvas=", canvas);
 		if (!canvas) return;
 		const ctx = canvas.getContext("2d");
-		console.log("[canvas-init] ctx=", ctx);
 		if (!ctx) return;
 
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
-		console.log("[canvas-init] dpr=", dpr, "innerWidth=", window.innerWidth, "innerHeight=", window.innerHeight);
 
-		let resizeTickCount = 0;
 		const resizeCanvas = () => {
 			const rect = canvas.getBoundingClientRect();
-			const cssW = rect.width;
-			const cssH = rect.height;
-			const w = Math.max(1, Math.round(cssW * dpr));
-			const h = Math.max(1, Math.round(cssH * dpr));
+			const w = Math.max(1, Math.round(rect.width * dpr));
+			const h = Math.max(1, Math.round(rect.height * dpr));
 			if (canvas.width !== w) canvas.width = w;
 			if (canvas.height !== h) canvas.height = h;
-			if (resizeTickCount < 3) {
-				console.log(
-					"[canvas-resize]",
-					"canvasRect=",
-					rect.width,
-					rect.height,
-					"→ backing=",
-					w,
-					h,
-				);
-				resizeTickCount++;
-			}
 		};
 		resizeCanvas();
 		const ro = new ResizeObserver(resizeCanvas);
@@ -405,36 +387,14 @@ export default function Game() {
 		window.addEventListener("blur", onBlur);
 		canvas.addEventListener("contextmenu", onContextMenu);
 
-		let frameCount = 0;
 		const loop = (now: number) => {
 			const dt = (now - last) / 1000;
 			last = now;
 			const s = stateRef.current;
 			resizeCanvas();
-			// DEBUG: paint solid red across the ENTIRE backing buffer with no
-			// transform applied. If the canvas area shows red, the canvas is
-			// reaching the screen and the bug is in render() / overlays.
-			// If not, something opaque is covering it.
-			ctx.setTransform(1, 0, 0, 1, 0, 0);
-			ctx.fillStyle = "#ff0000";
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.setTransform(canvas.width / ARENA_W, 0, 0, canvas.height / ARENA_H, 0, 0);
-			if (frameCount < 3) {
-				console.log(
-					"[loop] frame=",
-					frameCount,
-					"phase=",
-					s.phase,
-					"canvas.width=",
-					canvas.width,
-					"canvas.height=",
-					canvas.height,
-				);
-				frameCount++;
-			}
-			// DEBUG: SKIP render() so we only see the red fill.
-			// update(s, dt);
-			// render(ctx, s);
+			update(s, dt);
+			render(ctx, s);
 
 			hudClock += dt;
 			if (hudClock > 0.1) {
@@ -470,7 +430,11 @@ export default function Game() {
 			window.removeEventListener("blur", onBlur);
 			canvas.removeEventListener("contextmenu", onContextMenu);
 		};
-	}, []);
+		// Re-attach when isMobile flips: React swaps the IPhoneFrame wrapper
+		// for the mobile full-bleed wrapper, which unmounts the old canvas
+		// and mounts a new one. Without this, the new canvas never gets a
+		// resize observer or a draw loop.
+	}, [isMobile]);
 
 	const startMatchRecording = () => {
 		const canvas = canvasRef.current;
