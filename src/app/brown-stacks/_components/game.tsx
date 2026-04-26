@@ -310,8 +310,10 @@ export default function Game() {
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
 		canvas.width = ARENA_W * dpr;
 		canvas.height = ARENA_H * dpr;
-		canvas.style.width = `${ARENA_W}px`;
-		canvas.style.height = `${ARENA_H}px`;
+		// Don't pin canvas.style.width/height — let the CSS class h-full w-full
+		// control the displayed size so the game fits inside whatever container
+		// (iPhone frame on desktop, full viewport on mobile). The drawing
+		// context still operates in arena-space, and CSS stretches it to fit.
 		ctx.scale(dpr, dpr);
 
 		let raf = 0;
