@@ -2,6 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+
+type BeforeInstallPromptEvent = Event & {
+	prompt: () => Promise<void>;
+	userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
 import type { EditPlan } from "~/lib/ai-editor/types";
 import type { FeatureSnapshot, ViralMoment } from "~/lib/ai-editor/viral";
 import type { ThemeArt } from "~/lib/ai-theme";
@@ -66,6 +71,8 @@ export default function Game() {
 	const telemetrySentRef = useRef(false);
 	const [, setTick] = useState(0);
 	const [muted, setMuted] = useState(false);
+	const installPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
+	const [canInstall, setCanInstall] = useState(false);
 	const recorderRef = useRef<MediaRecorder | null>(null);
 	const chunksRef = useRef<Blob[]>([]);
 	const eventsRef = useRef<GameEvent[]>([]);
@@ -213,6 +220,35 @@ export default function Game() {
 			themeAudioRef.current = null;
 		};
 	}, []);
+
+	useEffect(() => {
+		const onBeforeInstall = (e: Event) => {
+			e.preventDefault();
+			installPromptRef.current = e as BeforeInstallPromptEvent;
+			setCanInstall(true);
+		};
+		const onInstalled = () => {
+			installPromptRef.current = null;
+			setCanInstall(false);
+		};
+		window.addEventListener("beforeinstallprompt", onBeforeInstall);
+		window.addEventListener("appinstalled", onInstalled);
+		return () => {
+			window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+			window.removeEventListener("appinstalled", onInstalled);
+		};
+	}, []);
+
+	const triggerInstall = async () => {
+		const evt = installPromptRef.current;
+		if (!evt) return;
+		await evt.prompt();
+		try {
+			await evt.userChoice;
+		} catch {}
+		installPromptRef.current = null;
+		setCanInstall(false);
+	};
 
 	useEffect(() => {
 		musicRef.current?.setMuted(muted);
@@ -941,6 +977,24 @@ export default function Game() {
 						>
 							START
 						</button>
+						{canInstall && (
+							<button
+								className="mt-4 cursor-pointer"
+								onClick={() => void triggerInstall()}
+								style={{
+									fontFamily: FONT_MONO,
+									fontSize: 11,
+									letterSpacing: "0.22em",
+									background: "transparent",
+									color: M.ink,
+									border: `1px solid ${M.accent}80`,
+									padding: "10px 22px",
+								}}
+								type="button"
+							>
+								⤓ INSTALL APP
+							</button>
+						)}
 					</div>
 				</MoodOverlay>
 			)}
