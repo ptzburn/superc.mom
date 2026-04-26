@@ -315,12 +315,8 @@ export default function Game() {
 		let resizeTickCount = 0;
 		const resizeCanvas = () => {
 			const rect = canvas.getBoundingClientRect();
-			const parent = canvas.parentElement;
-			const pRect = parent?.getBoundingClientRect();
-			const cssW = rect.width || pRect?.width || window.innerWidth;
-			const cssH = rect.height || pRect?.height || window.innerHeight;
-			canvas.style.width = `${cssW}px`;
-			canvas.style.height = `${cssH}px`;
+			const cssW = rect.width;
+			const cssH = rect.height;
 			const w = Math.max(1, Math.round(cssW * dpr));
 			const h = Math.max(1, Math.round(cssH * dpr));
 			if (canvas.width !== w) canvas.width = w;
@@ -331,15 +327,9 @@ export default function Game() {
 					"canvasRect=",
 					rect.width,
 					rect.height,
-					"parentRect=",
-					pRect?.width,
-					pRect?.height,
 					"→ backing=",
 					w,
 					h,
-					"cssBox=",
-					cssW,
-					cssH,
 				);
 				resizeTickCount++;
 			}
@@ -421,12 +411,14 @@ export default function Game() {
 			last = now;
 			const s = stateRef.current;
 			resizeCanvas();
+			// DEBUG: paint solid red across the ENTIRE backing buffer with no
+			// transform applied. If the canvas area shows red, the canvas is
+			// reaching the screen and the bug is in render() / overlays.
+			// If not, something opaque is covering it.
+			ctx.setTransform(1, 0, 0, 1, 0, 0);
+			ctx.fillStyle = "#ff0000";
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.setTransform(canvas.width / ARENA_W, 0, 0, canvas.height / ARENA_H, 0, 0);
-			// DEBUG: paint solid magenta over arena bounds. If we see magenta,
-			// the canvas + transform + display chain is fine and the bug is
-			// inside render(). If we don't, drawing isn't reaching pixels.
-			ctx.fillStyle = "#ff00ff";
-			ctx.fillRect(0, 0, ARENA_W, ARENA_H);
 			if (frameCount < 3) {
 				console.log(
 					"[loop] frame=",
@@ -440,8 +432,9 @@ export default function Game() {
 				);
 				frameCount++;
 			}
-			update(s, dt);
-			render(ctx, s);
+			// DEBUG: SKIP render() so we only see the red fill.
+			// update(s, dt);
+			// render(ctx, s);
 
 			hudClock += dt;
 			if (hudClock > 0.1) {
