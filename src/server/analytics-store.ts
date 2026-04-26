@@ -28,8 +28,8 @@ const STORE_PATH = path.join(process.cwd(), "data", "analytics.json");
 let writeQueue: Promise<void> = Promise.resolve();
 
 function normalizeGameSlug(gameSlug?: string) {
-	if (!gameSlug) return "game";
-	return gameSlug.replace(/^\//, "") || "game";
+	if (!gameSlug) return "brown-stacks";
+	return gameSlug.replace(/^\//, "") || "brown-stacks";
 }
 
 async function ensureStoreFile() {

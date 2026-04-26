@@ -3,6 +3,7 @@ import {
 	appendAnalysis,
 	getRecentSessionsByGame,
 } from "~/server/analytics-store";
+import { getGameDescriptor } from "~/server/game-descriptors";
 
 interface Suggestion {
 	param: string;
@@ -22,12 +23,14 @@ interface AnalysisResult {
 
 export async function POST(req: Request) {
 	const body = (await req.json().catch(() => ({}))) as { gameRoute?: string; gameSlug?: string };
-	const gameSlug = (body.gameSlug ?? body.gameRoute ?? "game").replace(/^\//, "");
+	const gameSlug = (body.gameSlug ?? body.gameRoute ?? "brown-stacks").replace(/^\//, "");
 	const sessions = await getRecentSessionsByGame(gameSlug, 200);
 
 	if (sessions.length === 0) {
 		return NextResponse.json({ error: "No sessions yet — play a game first!" }, { status: 400 });
 	}
+
+	const descriptor = getGameDescriptor(gameSlug);
 
 	const avgWave = sessions.reduce((s, g) => s + g.waveReached, 0) / sessions.length;
 	const avgKills = sessions.reduce((s, g) => s + g.kills, 0) / sessions.length;
@@ -38,35 +41,38 @@ export async function POST(req: Request) {
 		waveDist[s.waveReached] = (waveDist[s.waveReached] ?? 0) + 1;
 	}
 
-	const prompt = `You are a game balancing expert analyzing telemetry for "Squad vs Zombies" — a wave-based arena shooter.
+	const winRate =
+		descriptor.waveLabel === "Result"
+			? `${((sessions.filter((s) => s.waveReached === 1).length / sessions.length) * 100).toFixed(1)}%`
+			: null;
+
+	const telemetryBlock = [
+		`Telemetry (${sessions.length} sessions):`,
+		`- Average ${descriptor.waveLabel.toLowerCase()}: ${descriptor.waveLabel === "Result" ? `win rate ${winRate}` : avgWave.toFixed(1)}`,
+		`- Average kills: ${avgKills.toFixed(1)}`,
+		`- Average session length: ${Math.round(avgDuration)}s`,
+		`- ${descriptor.waveLabel} distribution: ${JSON.stringify(waveDist)}`,
+	].join("\n");
+
+	const prompt = `You are a game balancing expert analyzing telemetry for "${descriptor.title}" — ${descriptor.genre}.
 
 Game mechanics:
-- Player + 3 allies vs endless zombie waves
-- Zombies per wave: 5 + wave * 4
-- Walker: hp=30+wave*6, speed=75+wave*3.5 (base enemy)
-- Runner (wave 3+, 26% chance): hp=18+wave*3, speed=145+wave*4
-- Brute (wave 2+, 12% chance): hp=110+wave*18, speed=48+wave*1.4
-- Player bullet damage: 11  |  Ally bullet damage: 7
-- Player max HP: 100  |  Ally max HP: 70
-- Spawn rate: 0.6s initially, reduces to 0.12s minimum
-- Wave break: 2s between waves
+${descriptor.mechanics}
 
-Telemetry (${sessions.length} sessions):
-- Average wave reached: ${avgWave.toFixed(1)}
-- Average kills: ${avgKills.toFixed(1)}
-- Average session length: ${Math.round(avgDuration)}s
-- Wave death distribution: ${JSON.stringify(waveDist)}
+${telemetryBlock}
 
 Analyze and respond with JSON only (no markdown):
 {
   "summary": "2-3 sentence overview of player experience and biggest pain points",
   "problems": ["specific problem 1", "specific problem 2", "specific problem 3"],
   "suggestions": [
-    { "param": "BULLET_DAMAGE", "current": 11, "suggested": 14, "reason": "...", "impact": "+15% survival on wave 3" }
+    { "param": "EXAMPLE_PARAM", "current": 10, "suggested": 14, "reason": "...", "impact": "+15% improvement" }
   ],
-  "earlyGame": "assessment of wave 1-3 experience and new player onboarding",
+  "earlyGame": "assessment of early experience and new player onboarding",
   "estimatedRetentionGain": "+X%"
-}`;
+}
+
+IMPORTANT: Only suggest params from this list: ${descriptor.tunableParams.join(", ")}. Use exact param names.`;
 
 	const geminiKey = process.env.GEMINI_API_KEY;
 	const anthropicKey = process.env.ANTHROPIC_API_KEY;

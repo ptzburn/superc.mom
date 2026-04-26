@@ -7,6 +7,7 @@ export const env = createEnv({
 	 * isn't built with invalid env vars.
 	 */
 	server: {
+		BETTER_AUTH_URL: z.string().url().optional(),
 		BETTER_AUTH_SECRET:
 			process.env.NODE_ENV === "production"
 				? z.string()
@@ -22,6 +23,7 @@ export const env = createEnv({
 		DATABASE_URL: z.string().url(),
 		GEMINI_API_KEY: z.string().optional(),
 		ANTHROPIC_API_KEY: z.string().optional(),
+		OPENAI_API_KEY: z.string().optional(),
 		NODE_ENV: z
 			.enum(["development", "test", "production"])
 			.default("development"),
@@ -41,6 +43,7 @@ export const env = createEnv({
 	 * middlewares) or client-side so we need to destruct manually.
 	 */
 	runtimeEnv: {
+		BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
 		BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
 		BETTER_AUTH_GITHUB_CLIENT_ID: process.env.BETTER_AUTH_GITHUB_CLIENT_ID,
 		BETTER_AUTH_GITHUB_CLIENT_SECRET:
@@ -48,6 +51,7 @@ export const env = createEnv({
 		DATABASE_URL: process.env.DATABASE_URL,
 		GEMINI_API_KEY: process.env.GEMINI_API_KEY,
 		ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+		OPENAI_API_KEY: process.env.OPENAI_API_KEY,
 		NODE_ENV: process.env.NODE_ENV,
 	},
 	/**

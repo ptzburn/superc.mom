@@ -1,14 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { api } from "~/trpc/react";
 
-type GameOption = {
-	slug: string;
-	route: string;
-	label: string;
-};
+const GAME_SLUG = "brown-stacks";
 
 export default function Home() {
 	return (
@@ -19,59 +15,23 @@ export default function Home() {
 }
 
 function Dashboard() {
-	const [games, setGames] = useState<GameOption[]>([]);
-	const [selectedGameRoute, setSelectedGameRoute] = useState("/game");
-	const [gamesError, setGamesError] = useState<string | null>(null);
 	const [isAnalysing, setIsAnalysing] = useState(false);
 	const [analyseError, setAnalyseError] = useState<string | null>(null);
 	const [applyError, setApplyError] = useState<string | null>(null);
 	const [applyNotice, setApplyNotice] = useState<string | null>(null);
 	const [applyingSuggestionKey, setApplyingSuggestionKey] = useState<string | null>(null);
-	const [githubUrl, setGithubUrl] = useState("");
-	const [addGameNotice, setAddGameNotice] = useState<string | null>(null);
-	const selectedGameSlug = selectedGameRoute.replace(/^\//, "") || "game";
+
 	const stats = api.dashboard.getStats.useQuery(
-		{ gameSlug: selectedGameSlug },
+		{ gameSlug: GAME_SLUG },
 		{ refetchInterval: 10_000 },
 	);
 	const sessions = api.dashboard.getRecentSessions.useQuery(
-		{ gameSlug: selectedGameSlug },
+		{ gameSlug: GAME_SLUG },
 		{ refetchInterval: 10_000 },
 	);
 	const analysis = api.dashboard.getLatestAnalysis.useQuery(
-		{ gameSlug: selectedGameSlug },
+		{ gameSlug: GAME_SLUG },
 		{ refetchInterval: 15_000 },
-	);
-
-	useEffect(() => {
-		let alive = true;
-		const loadGames = async () => {
-			setGamesError(null);
-			try {
-				const res = await fetch("/api/games");
-				if (!res.ok) throw new Error("Failed to load games");
-				const data = (await res.json()) as { games: GameOption[] };
-				if (!alive) return;
-				setGames(data.games);
-				if (data.games.length > 0) {
-					setSelectedGameRoute((prev) =>
-						data.games.some((g) => g.route === prev) ? prev : data.games[0]!.route,
-					);
-				}
-			} catch (e) {
-				if (!alive) return;
-				setGamesError(e instanceof Error ? e.message : "Failed to load games");
-			}
-		};
-		void loadGames();
-		return () => {
-			alive = false;
-		};
-	}, []);
-
-	const selectedGame = useMemo(
-		() => games.find((game) => game.route === selectedGameRoute) ?? null,
-		[games, selectedGameRoute],
 	);
 
 	const runAnalysis = async () => {
@@ -81,7 +41,7 @@ function Dashboard() {
 			const res = await fetch("/api/balance", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ gameSlug: selectedGameSlug }),
+				body: JSON.stringify({ gameSlug: GAME_SLUG }),
 			});
 			const data = (await res.json()) as { error?: string };
 			if (!res.ok) throw new Error(data.error ?? "Analysis failed");
@@ -102,7 +62,7 @@ function Dashboard() {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
-					gameSlug: selectedGameSlug,
+					gameSlug: GAME_SLUG,
 					param,
 					suggested,
 				}),
@@ -133,62 +93,17 @@ function Dashboard() {
 			{/* Header */}
 			<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 				<div>
-					<h1 className="text-3xl font-bold tracking-tight">Game Analytics</h1>
+					<h1 className="text-3xl font-bold tracking-tight">Brown Stacks</h1>
 					<p className="text-neutral-400 mt-1 text-sm">
-						{selectedGame
-							? `${selectedGame.label} · AI balancing dashboard`
-							: "Choose a game to optimize"}
+						Wave-based arena shooter · AI balancing dashboard
 					</p>
 				</div>
-				<div className="flex w-full flex-col gap-3 lg:w-auto lg:min-w-[420px]">
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<select
-							className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100"
-							onChange={(e) => setSelectedGameRoute(e.target.value)}
-							value={selectedGameRoute}
-						>
-							{games.length === 0 ? (
-								<option value="/game">game (default)</option>
-							) : (
-								games.map((game) => (
-									<option key={game.slug} value={game.route}>
-										{game.label}
-									</option>
-								))
-							)}
-						</select>
-						<Link
-							href={selectedGameRoute}
-							className="rounded-lg bg-emerald-600 px-4 py-2 text-center text-sm font-semibold text-white hover:bg-emerald-500 transition"
-						>
-							▶ Play Selected Game
-						</Link>
-					</div>
-					<div className="flex flex-col gap-2 sm:flex-row">
-						<input
-							type="url"
-							value={githubUrl}
-							onChange={(e) => setGithubUrl(e.target.value)}
-							placeholder="Paste GitHub repo URL to add new game (placeholder)"
-							className="w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500"
-						/>
-						<button
-							type="button"
-							onClick={() => {
-								setAddGameNotice(
-									githubUrl.trim()
-										? "Placeholder saved: GitHub import flow will be connected next."
-										: "Paste a GitHub URL first (placeholder for upcoming add-game flow).",
-								);
-							}}
-							className="rounded-lg border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-semibold text-neutral-200 hover:bg-neutral-800"
-						>
-							+ Add Game
-						</button>
-					</div>
-					{gamesError && <p className="text-xs text-red-300">{gamesError}</p>}
-					{addGameNotice && <p className="text-xs text-neutral-400">{addGameNotice}</p>}
-				</div>
+				<Link
+					href="/brown-stacks"
+					className="rounded-lg bg-emerald-600 px-5 py-2.5 text-center text-sm font-semibold text-white hover:bg-emerald-500 transition"
+				>
+					▶ Play Game
+				</Link>
 			</div>
 
 			{/* Stat cards */}
@@ -200,7 +115,7 @@ function Dashboard() {
 			</div>
 
 			<div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-				{/* Wave death distribution */}
+				{/* Wave distribution */}
 				<section className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
 					<h2 className="font-semibold text-neutral-200 mb-4">Where Players Die</h2>
 					{waveDistEntries.length === 0 ? (
@@ -212,7 +127,7 @@ function Dashboard() {
 									<span className="w-16 text-neutral-400 shrink-0">Wave {wave}</span>
 									<div className="flex-1 bg-neutral-800 rounded-full h-5 overflow-hidden">
 										<div
-											className="h-full rounded-full bg-gradient-to-r from-red-600 to-orange-500 transition-all"
+											className="h-full rounded-full transition-all bg-gradient-to-r from-red-600 to-orange-500"
 											style={{ width: `${(count / maxCount) * 100}%` }}
 										/>
 									</div>
@@ -322,7 +237,9 @@ function Dashboard() {
 							{/* Early game */}
 							{analysis.data.data.earlyGame && (
 								<div>
-									<h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">Early Game (Wave 1–3)</h3>
+									<h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-500 mb-3">
+										Early Game (Wave 1–3)
+									</h3>
 									<p className="text-sm text-neutral-300 leading-relaxed">{analysis.data.data.earlyGame}</p>
 								</div>
 							)}

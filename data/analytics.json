@@ -1,44 +1,53 @@
 {
   "sessions": [
     {
-      "id": "33997f17-cd73-4ca2-bc0a-6505232ae20c",
-      "gameSlug": "game_z",
+      "id": "4305a2fd-5b15-4f7f-8889-de7f7698efa5",
+      "gameSlug": "brown-stacks",
       "waveReached": 2,
-      "kills": 5,
-      "durationSeconds": 31,
-      "createdAt": "2026-04-25T21:50:36.694Z"
+      "kills": 12,
+      "durationSeconds": 28,
+      "createdAt": "2026-04-26T02:43:09.873Z"
     },
     {
-      "id": "24f3bc1f-e70f-4868-a3fc-7d3bfdb75927",
-      "gameSlug": "game",
+      "id": "b65d879f-1abf-4795-9f02-29756ae6c021",
+      "gameSlug": "brown-stacks",
+      "waveReached": 5,
+      "kills": 61,
+      "durationSeconds": 114,
+      "createdAt": "2026-04-26T02:54:07.854Z"
+    },
+    {
+      "id": "a15fd052-87aa-4ff2-8e76-b29f519e8ee0",
+      "gameSlug": "brown-stacks",
+      "waveReached": 2,
+      "kills": 20,
+      "durationSeconds": 33,
+      "createdAt": "2026-04-26T02:55:41.365Z"
+    },
+    {
+      "id": "9bbd1fb8-e667-4dd5-93fe-479311cfa1cf",
+      "gameSlug": "brown-stacks",
       "waveReached": 3,
-      "kills": 25,
-      "durationSeconds": 40,
-      "createdAt": "2026-04-25T21:55:30.678Z"
+      "kills": 23,
+      "durationSeconds": 55,
+      "createdAt": "2026-04-26T03:36:43.464Z"
     },
     {
-      "id": "d57530ef-2964-487b-a4ec-8b2230bfb626",
-      "gameSlug": "game",
-      "waveReached": 2,
-      "kills": 9,
-      "durationSeconds": 16,
-      "createdAt": "2026-04-26T01:50:57.151Z"
+      "id": "d1236f83-fac3-4ebc-867e-383ece2937e2",
+      "gameSlug": "brown-stacks",
+      "waveReached": 1,
+      "kills": 8,
+      "durationSeconds": 13,
+      "createdAt": "2026-04-26T03:39:04.663Z"
     }
   ],
   "analyses": [
     {
-      "id": "483d6d40-bba3-46c3-9d9d-a65b8fd51fda",
-      "gameSlug": "game_z",
-      "summary": "Players are struggling to progress beyond the early waves, with a significant number dying on wave 2. The current damage output and enemy scaling appear to be too high for new players to manage effectively, leading to short and frustrating sessions.",
-      "analysisJson": "{\"summary\":\"Players are struggling to progress beyond the early waves, with a significant number dying on wave 2. The current damage output and enemy scaling appear to be too high for new players to manage effectively, leading to short and frustrating sessions.\",\"problems\":[\"Player damage output is insufficient to quickly clear early waves, especially with the introduction of Runners and Brutes.\",\"Enemy HP and speed scale too rapidly, making them difficult to kill before they overwhelm the player.\",\"The wave death distribution indicates a critical failure point around wave 2, suggesting a steep difficulty spike.\"],\"suggestions\":[{\"param\":\"PLAYER_BULLET_DAMAGE\",\"current\":11,\"suggested\":14,\"reason\":\"Increase player damage to allow for faster elimination of early-wave enemies, reducing incoming damage and pressure.\",\"impact\":\"+15% survival on wave 3\"},{\"param\":\"WALKER_HP_SCALING\",\"current\":\"30+wave*6\",\"suggested\":\"30+wave*4\",\"reason\":\"Reduce the HP scaling of Walkers to make them more manageable in later waves, preventing them from becoming bullet sponges.\",\"impact\":\"Reduces time-to-kill for basic enemies by ~20% on wave 5\"},{\"param\":\"RUNNER_CHANCE\",\"current\":0.26,\"suggested\":0.15,\"reason\":\"Lower the chance of Runners appearing in early waves (wave 3+) to give players more time to adapt to the game's pace and enemy types.\",\"impact\":\"Reduces the likelihood of encountering high-speed threats in the first few waves\"}],\"earlyGame\":\"The early game (waves 1-3) is proving to be a significant hurdle. The introduction of Brutes on wave 2 and Runners on wave 3, combined with the current damage output, creates a sharp difficulty spike that likely leads to most players dying before wave 3. New player onboarding is poor due to this immediate challenge.\",\"estimatedRetentionGain\":\"+25%\"}",
-      "createdAt": "2026-04-25T21:50:55.272Z"
-    },
-    {
-      "id": "976573b6-7147-4d32-ad97-4b978e1aa968",
-      "gameSlug": "game",
-      "summary": "Players are struggling to progress beyond wave 3, indicated by a high death rate at this wave. The current damage output seems insufficient to handle the increasing zombie threat, leading to quick player elimination. The short session length and low average wave reached suggest a steep difficulty curve early on.",
-      "analysisJson": "{\"summary\":\"Players are struggling to progress beyond wave 3, indicated by a high death rate at this wave. The current damage output seems insufficient to handle the increasing zombie threat, leading to quick player elimination. The short session length and low average wave reached suggest a steep difficulty curve early on.\",\"problems\":[\"Player damage output is too low to effectively clear waves by wave 3.\",\"Zombie HP scales too rapidly, making them difficult to kill with current player/ally damage.\",\"The introduction of Runners and Brutes at wave 3 significantly increases threat without a corresponding player power increase.\"],\"suggestions\":[{\"param\":\"PLAYER_BULLET_DAMAGE\",\"current\":11,\"suggested\":14,\"reason\":\"Increase player damage to better manage zombie threat, especially with the introduction of tougher enemy types at wave 3. This will allow players to clear waves more efficiently and reduce incoming damage.\",\"impact\":\"+15% survival on wave 3\"},{\"param\":\"ALLY_BULLET_DAMAGE\",\"current\":7,\"suggested\":9,\"reason\":\"Boost ally damage to provide more consistent support and help players manage larger groups of zombies. This will indirectly increase player survivability by reducing the burden on the player.\",\"impact\":\"+10% wave progression\"},{\"param\":\"WALKER_HP_SCALING\",\"current\":\"30+wave*6\",\"suggested\":\"30+wave*5\",\"reason\":\"Slightly reduce Walker HP scaling to make them more manageable in early waves, allowing players to conserve ammo and focus on more dangerous threats.\",\"impact\":\"+5% survival on wave 3\"}],\"earlyGame\":\"The early game (waves 1-3) is proving to be a significant hurdle. Players are likely overwhelmed by the combined threat of increasing zombie numbers and the introduction of specialized enemies like Runners and Brutes. The current damage output is insufficient to counter this escalating threat, leading to a frustrating experience for new players and contributing to the low average wave reached.\",\"estimatedRetentionGain\":\"+10%\"}",
-      "createdAt": "2026-04-25T22:04:10.059Z"
+      "id": "f1092435-10e6-42c0-9382-01bc3d44efa6",
+      "gameSlug": "brown-stacks",
+      "summary": "Players are struggling to progress beyond wave 3, indicated by the low average wave reached and high kill count relative to wave progression. This suggests a significant difficulty spike or insufficient player/ally power scaling in the early to mid-game, leading to short, unproductive sessions.",
+      "analysisJson": "{\"summary\":\"Players are struggling to progress beyond wave 3, indicated by the low average wave reached and high kill count relative to wave progression. This suggests a significant difficulty spike or insufficient player/ally power scaling in the early to mid-game, leading to short, unproductive sessions.\",\"problems\":[\"Difficulty spike around wave 3-5\",\"Low player/ally survivability against increasing zombie threat\",\"Insufficient damage output to clear waves efficiently as waves progress\"],\"suggestions\":[{\"param\":\"ALLY_BULLET_DAMAGE\",\"current\":7,\"suggested\":9,\"reason\":\"Ally damage is significantly lower than player damage, making them less effective at contributing to wave clear. Increasing their damage will help alleviate the pressure on the player and speed up enemy elimination, especially against tougher enemies introduced later.\",\"impact\":\"+10% improvement\"},{\"param\":\"RUNNER_CHANCE\",\"current\":0.26,\"suggested\":0.2,\"reason\":\"The Runner's high speed and decent HP can overwhelm players, especially when combined with other zombie types. Reducing its chance slightly in the early waves can ease the initial pressure and allow players to get a better grasp of the game mechanics.\",\"impact\":\"+8% improvement\"},{\"param\":\"BRUTE_CHANCE\",\"current\":0.12,\"suggested\":0.1,\"reason\":\"The Brute's high HP and damage can be a significant threat, especially when encountered early. A slight reduction in its chance can prevent early game-ending encounters and allow for more consistent progression.\",\"impact\":\"+7% improvement\"},{\"param\":\"ALLY_MAX_HP\",\"current\":70,\"suggested\":80,\"reason\":\"Ally survivability is low, leading to them being quickly eliminated and reducing the player's effective firepower. Increasing their HP will allow them to survive longer and contribute more consistently to combat.\",\"impact\":\"+12% improvement\"}],\"earlyGame\":\"The early game appears to be a significant hurdle. With an average wave reached of 3.0 and a session length of 58 seconds, players are likely dying very early, possibly around wave 3 or 4, which is when Runners start appearing. The current enemy scaling and player/ally power levels do not seem to provide a smooth onboarding experience.\",\"estimatedRetentionGain\":\"+15%\"}",
+      "createdAt": "2026-04-26T03:03:20.591Z"
     }
   ]
 }
