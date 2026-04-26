@@ -634,7 +634,7 @@ export default function Game() {
 			<DeviceCorners color={M.accent} />
 
 			<div
-				className="pointer-events-none absolute top-0 right-0 left-0 flex flex-col gap-1.5"
+				className="pointer-events-none absolute top-0 right-0 left-0 z-40 flex flex-col gap-1.5"
 				style={{
 					padding: "10px 24px 18px",
 					background:
