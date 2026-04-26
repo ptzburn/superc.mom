@@ -7,7 +7,8 @@ import type { FeatureSnapshot, ViralMoment } from "~/lib/ai-editor/viral";
 import type { ThemeArt } from "~/lib/ai-theme";
 import { ARENA_H, ARENA_W, PLAYER_MAX_HP } from "./constants";
 import { render } from "./draw";
-import { IPhoneFrame } from "./IPhoneFrame";
+import { IPhoneFrame, useIsMobile } from "./IPhoneFrame";
+import { TouchPad } from "./TouchPad";
 import { FONT_DISPLAY, FONT_MONO, MOODS } from "./moods";
 import { createMusicEngine, type MusicEngine } from "./music";
 import { ThemeField, ViralOverlay } from "./overlays";
@@ -21,7 +22,42 @@ import { createInitialState } from "./world";
 export { viralScore } from "./utils";
 export type { GameEvent } from "./types";
 
+// Reach-out into the imperative game runtime from the TouchPad. Defined
+// outside the component so the callbacks are stable and don't churn React
+// reconciliation each frame.
+function makeTouchBridge(stateRef: React.MutableRefObject<unknown>) {
+	const MOVEMENT_KEYS = ["w", "a", "s", "d"] as const;
+	const setKeys = (next: Set<string>) => {
+		// biome-ignore lint/suspicious/noExplicitAny: imperative bridge
+		const s = (stateRef.current as any);
+		if (!s?.keys) return;
+		for (const k of MOVEMENT_KEYS) s.keys.delete(k);
+		for (const k of next) s.keys.add(k);
+	};
+	const setAim = (
+		aim: { dx: number; dy: number; firing: boolean } | null,
+	) => {
+		// biome-ignore lint/suspicious/noExplicitAny: imperative bridge
+		const s = (stateRef.current as any);
+		if (!s?.player) return;
+		if (!aim) {
+			s.shooting = false;
+			return;
+		}
+		const m = Math.hypot(aim.dx, aim.dy);
+		if (m > 0) {
+			s.mouse = {
+				x: s.player.pos.x + aim.dx * 200,
+				y: s.player.pos.y + aim.dy * 200,
+			};
+		}
+		s.shooting = aim.firing;
+	};
+	return { setKeys, setAim };
+}
+
 export default function Game() {
+	const isMobile = useIsMobile();
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const stateRef = useRef<GameRuntime>(createInitialState());
 	const musicRef = useRef<MusicEngine | null>(null);
@@ -544,6 +580,11 @@ export default function Game() {
 			? "portrait"
 			: "landscape";
 
+	const touchBridge = makeTouchBridge(
+		stateRef as unknown as React.MutableRefObject<unknown>,
+	);
+	const showTouchPad = isMobile && hud.phase === "playing" && !hud.paused;
+
 	const inner = (
 		<div
 			className="relative h-full w-full select-none overflow-hidden"
@@ -551,7 +592,7 @@ export default function Game() {
 				background: M.surface,
 				color: M.ink,
 				fontFamily: "var(--font-sans), system-ui, sans-serif",
-				borderRadius: 38,
+				borderRadius: isMobile ? 0 : 38,
 			}}
 		>
 			<canvas
@@ -564,9 +605,13 @@ export default function Game() {
 						hud.phase === "playing"
 							? "saturate(0.92) contrast(1.06) brightness(0.98)"
 							: "saturate(0.5) brightness(0.7)",
-					borderRadius: 38,
+					borderRadius: isMobile ? 0 : 38,
 				}}
 			/>
+
+			{showTouchPad && (
+				<TouchPad setKeys={touchBridge.setKeys} setAim={touchBridge.setAim} />
+			)}
 
 			<DeviceCorners color={M.accent} />
 
@@ -963,6 +1008,17 @@ export default function Game() {
 		</div>
 	);
 
+	if (isMobile) {
+		// Drop the iPhone mockup chrome on real phones — full-bleed game.
+		return (
+			<div
+				className="fixed inset-0 overflow-hidden bg-[#020305]"
+				style={{ touchAction: "none" }}
+			>
+				{inner}
+			</div>
+		);
+	}
 	return <IPhoneFrame orientation={orientation}>{inner}</IPhoneFrame>;
 }
 

@@ -1,0 +1,17 @@
+{
+	"name": "Viral — Brown Stacks",
+	"short_name": "Viral",
+	"description": "Wave-based arena shooter with AI viral-clip editor.",
+	"start_url": "/brown-stacks",
+	"scope": "/",
+	"display": "standalone",
+	"orientation": "any",
+	"background_color": "#020305",
+	"theme_color": "#020305",
+	"icons": [
+		{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+		{ "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+	],
+	"categories": ["games"],
+	"prefer_related_applications": false
+}

@@ -1,6 +1,25 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+
+/**
+ * Returns true when the viewport is mobile-sized OR a coarse pointer (touch).
+ * Used to drop the iPhone mockup chrome on actual phones — they don't need
+ * a phone-shaped picture-frame.
+ */
+export function useIsMobile() {
+	const [isMobile, setIsMobile] = useState(false);
+	useEffect(() => {
+		const mql = window.matchMedia(
+			"(max-width: 820px), (pointer: coarse) and (max-width: 1024px)",
+		);
+		const update = () => setIsMobile(mql.matches);
+		update();
+		mql.addEventListener("change", update);
+		return () => mql.removeEventListener("change", update);
+	}, []);
+	return isMobile;
+}
 
 // Screen rect inside /public/mockup/iphone-15-black-portrait.png (1419x2796).
 // Tuned per orientation — the rotated PNG has slightly asymmetric bezel
