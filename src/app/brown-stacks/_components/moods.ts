@@ -1,3 +1,8 @@
+// Mood-as-template token system, lifted from the Claude Design hand-off.
+// Every mood drives: bg/surface, ink, accent, glow, video grade, motion
+// intensity, type weight. The LLM editorial mood selects the whole
+// language, not just a hue.
+
 import type { EditPlan } from "~/lib/ai-editor/types";
 
 export type Mood = EditPlan["mood"];

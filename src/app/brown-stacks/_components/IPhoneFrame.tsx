@@ -2,11 +2,14 @@
 
 import type { ReactNode } from "react";
 
-const SCREEN_TOP_PCT = 4.0;
-const SCREEN_LEFT_PCT = 7.5;
-const SCREEN_WIDTH_PCT = 85.0;
-const SCREEN_HEIGHT_PCT = 92.0;
-const SCREEN_RADIUS_PX = 38;
+// Screen rect inside /public/mockup/iphone-15-black-portrait.png (1419x2796).
+// Tuned to match the visible glass area of the mockup. If the mockup PNG
+// changes, retune these four numbers — nothing else.
+const SCREEN_TOP_PCT = 4.0; // top inset in portrait
+const SCREEN_LEFT_PCT = 7.5; // left inset in portrait
+const SCREEN_WIDTH_PCT = 85.0; // screen width in portrait
+const SCREEN_HEIGHT_PCT = 92.0; // screen height in portrait
+const SCREEN_RADIUS_PX = 38; // matches the visible glass corner radius
 
 type Orientation = "landscape" | "portrait";
 
@@ -30,6 +33,7 @@ export function IPhoneFrame({
 				filter: "drop-shadow(0 40px 80px rgba(0,0,0,0.6))",
 			}}
 		>
+			{/* SCREEN — content paints here, behind the mockup PNG */}
 			<div
 				className="absolute overflow-hidden bg-black"
 				style={
@@ -53,6 +57,7 @@ export function IPhoneFrame({
 				{children}
 			</div>
 
+			{/* MOCKUP PNG — rotated 90° via CSS for landscape */}
 			{/* biome-ignore lint/performance/noImgElement: mockup is fixed asset */}
 			<img
 				alt=""
@@ -62,6 +67,12 @@ export function IPhoneFrame({
 				style={
 					isLandscape
 						? {
+								// Container is W × H landscape (e.g., 820 × 416, aspect 2796/1419).
+								// Want the rotated PNG to fill it visually.
+								// PNG natural is 1419×2796 (portrait, aspect 1419/2796).
+								// CSS box at width=H, height=W (portrait box matching the
+								// rotated landscape) — then rotate 90° around its center fills
+								// the container exactly.
 								width: `calc(100% * 1419 / 2796)`,
 								aspectRatio: "1419 / 2796",
 								height: "auto",

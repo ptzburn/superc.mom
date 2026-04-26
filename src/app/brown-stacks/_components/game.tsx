@@ -10,10 +10,7 @@ import { render } from "./draw";
 import { IPhoneFrame } from "./IPhoneFrame";
 import { FONT_DISPLAY, FONT_MONO, MOODS } from "./moods";
 import { createMusicEngine, type MusicEngine } from "./music";
-import {
-	ThemeField,
-	ViralVerdict,
-} from "./overlays";
+import { ThemeField, ViralOverlay } from "./overlays";
 import { renderEdit } from "./renderEdit";
 import { createSfxEngine, type SfxEngine } from "./sfx";
 import { startWave, update } from "./simulation";
@@ -886,108 +883,16 @@ export default function Game() {
 			)}
 
 			{hud.phase === "gameover" && (
-				<MoodOverlay mood={M}>
-					<div className="flex w-full max-w-3xl flex-col items-center gap-4 px-4">
-						<div
-							style={{
-								fontFamily: FONT_MONO,
-								fontSize: 9,
-								letterSpacing: "0.3em",
-								color: M.inkDim,
-								marginBottom: 4,
-							}}
-						>
-							VERDICT — OVERRUN
-						</div>
-						<h1
-							style={{
-								fontFamily: FONT_DISPLAY,
-								fontSize: "clamp(36px, 7vw, 72px)",
-								lineHeight: 0.88,
-								color: M.ink,
-								margin: 0,
-							}}
-						>
-							THE ARENA{" "}
-							<span style={{ color: M.accent2, fontStyle: "italic" }}>
-								FELL.
-							</span>
-						</h1>
-						<p
-							style={{
-								fontFamily: FONT_MONO,
-								fontSize: 11,
-								color: M.inkDim,
-								letterSpacing: "0.15em",
-							}}
-						>
-							WAVE {String(hud.wave).padStart(2, "0")} · KILLS{" "}
-							{String(hud.kills).padStart(3, "0")} ·{" "}
-							{matchSummary.eventCount} EVENTS ·{" "}
-							{matchSummary.snapshotCount} SAMPLES
-						</p>
-
-						<ViralVerdict
-							editState={editState}
-							matchSummary={matchSummary}
-							onRequestEdit={requestEdit}
-							videoState={videoState}
-							viralState={viralState}
-						/>
-
-						<div className="flex w-full flex-wrap items-center justify-center gap-3 pt-2">
-							<button
-								className="cursor-pointer"
-								onClick={startGame}
-								style={{
-									fontFamily: FONT_DISPLAY,
-									fontSize: "clamp(22px, 3vw, 32px)",
-									letterSpacing: "0.04em",
-									background: M.accent,
-									color: "#000",
-									padding: "12px 32px",
-									border: "none",
-									boxShadow: `0 0 40px ${M.accent}80`,
-								}}
-								type="button"
-							>
-								REDEPLOY
-							</button>
-							<button
-								className="cursor-pointer"
-								onClick={downloadTelemetry}
-								style={{
-									fontFamily: FONT_MONO,
-									fontSize: 10,
-									letterSpacing: "0.22em",
-									background: "transparent",
-									color: M.inkDim,
-									border: `1px solid ${M.inkDim}50`,
-									padding: "11px 16px",
-								}}
-								type="button"
-							>
-								TELEMETRY .JSON
-							</button>
-							<Link
-								href="/"
-								onClick={() => submitTelemetry(true)}
-								style={{
-									fontFamily: FONT_MONO,
-									fontSize: 10,
-									letterSpacing: "0.22em",
-									background: "transparent",
-									color: M.inkDim,
-									border: `1px solid ${M.inkDim}50`,
-									padding: "11px 16px",
-									textDecoration: "none",
-								}}
-							>
-								DASHBOARD
-							</Link>
-						</div>
-					</div>
-				</MoodOverlay>
+				<ViralOverlay
+					editState={editState}
+					kills={hud.kills}
+					matchSummary={matchSummary}
+					onAgain={startGame}
+					onMakeClip={() => void requestEdit()}
+					videoState={videoState}
+					viralState={viralState}
+					wave={hud.wave}
+				/>
 			)}
 
 			{hud.phase === "playing" && hud.paused && (
