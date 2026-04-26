@@ -422,6 +422,11 @@ export default function Game() {
 			const s = stateRef.current;
 			resizeCanvas();
 			ctx.setTransform(canvas.width / ARENA_W, 0, 0, canvas.height / ARENA_H, 0, 0);
+			// DEBUG: paint solid magenta over arena bounds. If we see magenta,
+			// the canvas + transform + display chain is fine and the bug is
+			// inside render(). If we don't, drawing isn't reaching pixels.
+			ctx.fillStyle = "#ff00ff";
+			ctx.fillRect(0, 0, ARENA_W, ARENA_H);
 			if (frameCount < 3) {
 				console.log(
 					"[loop] frame=",
@@ -432,10 +437,6 @@ export default function Game() {
 					canvas.width,
 					"canvas.height=",
 					canvas.height,
-					"transform sx=",
-					canvas.width / ARENA_W,
-					"sy=",
-					canvas.height / ARENA_H,
 				);
 				frameCount++;
 			}
