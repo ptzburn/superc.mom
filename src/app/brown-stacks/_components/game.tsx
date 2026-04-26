@@ -393,6 +393,10 @@ export default function Game() {
 			const dt = (now - last) / 1000;
 			last = now;
 			const s = stateRef.current;
+			// Resize check on every frame — ResizeObserver can miss the
+			// initial layout pass, leaving the backing buffer at the
+			// HTMLCanvas default of 300×150. Idempotent when nothing changed.
+			resizeCanvas();
 			// Reset base transform: arena coords → full backing buffer.
 			// render() uses ctx.save()/restore() around its drawing so it
 			// trusts that the current transform on entry is the arena map.
