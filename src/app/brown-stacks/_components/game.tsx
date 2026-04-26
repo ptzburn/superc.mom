@@ -308,13 +308,22 @@ export default function Game() {
 		if (!ctx) return;
 
 		const dpr = Math.min(window.devicePixelRatio || 1, 2);
-		canvas.width = ARENA_W * dpr;
-		canvas.height = ARENA_H * dpr;
-		// Don't pin canvas.style.width/height — let the CSS class h-full w-full
-		// control the displayed size so the game fits inside whatever container
-		// (iPhone frame on desktop, full viewport on mobile). The drawing
-		// context still operates in arena-space, and CSS stretches it to fit.
-		ctx.scale(dpr, dpr);
+
+		// Size the backing buffer to match the canvas's *displayed* size every
+		// time it changes, then map arena coords (0..ARENA_W, 0..ARENA_H) onto
+		// the full backing buffer. This way the game fills whatever container
+		// the canvas is in — desktop iPhone frame OR mobile full-viewport —
+		// and on aspect mismatch the art stretches rather than getting clipped.
+		const resizeCanvas = () => {
+			const rect = canvas.getBoundingClientRect();
+			const w = Math.max(1, Math.round(rect.width * dpr));
+			const h = Math.max(1, Math.round(rect.height * dpr));
+			if (canvas.width !== w) canvas.width = w;
+			if (canvas.height !== h) canvas.height = h;
+		};
+		resizeCanvas();
+		const ro = new ResizeObserver(resizeCanvas);
+		ro.observe(canvas);
 
 		let raf = 0;
 		let last = performance.now();
@@ -384,6 +393,10 @@ export default function Game() {
 			const dt = (now - last) / 1000;
 			last = now;
 			const s = stateRef.current;
+			// Reset base transform: arena coords → full backing buffer.
+			// render() uses ctx.save()/restore() around its drawing so it
+			// trusts that the current transform on entry is the arena map.
+			ctx.setTransform(canvas.width / ARENA_W, 0, 0, canvas.height / ARENA_H, 0, 0);
 			update(s, dt);
 			render(ctx, s);
 
@@ -410,6 +423,7 @@ export default function Game() {
 
 		return () => {
 			cancelAnimationFrame(raf);
+			ro.disconnect();
 			window.removeEventListener("keydown", onKeyDown);
 			window.removeEventListener("keyup", onKeyUp);
 			canvas.removeEventListener("mousemove", onMouseMove);
