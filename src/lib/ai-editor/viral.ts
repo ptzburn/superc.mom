@@ -75,23 +75,28 @@ export function mockDetectViralMoments(
 		let reason = "";
 		if (e.kind === "kill") {
 			score = 25;
-			const hpFrac = e.killerHp / e.killerMaxHp;
+			const killerMax = e.killerMaxHp || 1;
+			const hpFrac = (e.killerHp ?? killerMax) / killerMax;
+			// JSON.stringify turns Infinity into null on the wire, so coerce
+			// any null/undefined chainSeconds to "no prior kill".
+			const chain = typeof e.chainSeconds === "number" ? e.chainSeconds : 9999;
+			const range = typeof e.range === "number" ? e.range : 0;
 			if (hpFrac < 0.25) {
 				score += 45;
 				label = "1HP CLUTCH";
 				reason = `kill landed at ${Math.round(hpFrac * 100)}% HP.`;
 			}
-			if (e.chainSeconds < 2) {
+			if (chain < 2) {
 				score += 30;
 				label = label || "RAPID FIRE";
-				reason = reason || `chained ${e.chainSeconds.toFixed(1)}s after last kill.`;
-			} else if (e.chainSeconds < 4) {
+				reason = reason || `chained ${chain.toFixed(1)}s after last kill.`;
+			} else if (chain < 4) {
 				score += 15;
 			}
-			if (e.range > 400) {
+			if (range > 400) {
 				score += 20;
 				label = label || "CROSS MAP";
-				reason = reason || `${Math.round(e.range)}px line of fire.`;
+				reason = reason || `${Math.round(range)}px line of fire.`;
 			}
 			if (e.victimKind === "brute") {
 				score += 15;
@@ -125,57 +130,80 @@ export function mockDetectViralMoments(
 	return kept;
 }
 
+function extractJson(text: string): string {
+	const trimmed = text.trim();
+	const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+	if (fenced?.[1]) return fenced[1].trim();
+	const first = trimmed.indexOf("{");
+	const last = trimmed.lastIndexOf("}");
+	if (first !== -1 && last !== -1 && last > first) {
+		return trimmed.slice(first, last + 1);
+	}
+	return trimmed;
+}
+
+function filterMoments(events: GameEvent[], raw: unknown): ViralMoment[] {
+	const moments = (raw as { moments?: ViralMoment[] })?.moments ?? [];
+	return moments.filter(
+		(m) =>
+			m &&
+			typeof m.eventIndex === "number" &&
+			m.eventIndex >= 0 &&
+			m.eventIndex < events.length &&
+			typeof m.score === "number" &&
+			m.score >= VIRAL_THRESHOLD &&
+			typeof m.label === "string" &&
+			typeof m.reason === "string",
+	);
+}
+
+async function callGemini(
+	events: GameEvent[],
+	snapshots: FeatureSnapshot[],
+): Promise<ViralMoment[]> {
+	const key = process.env.GEMINI_API_KEY;
+	if (!key) throw new Error("no GEMINI_API_KEY");
+	const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+	const res = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+			contents: [
+				{
+					role: "user",
+					parts: [{ text: JSON.stringify({ events, snapshots }) }],
+				},
+			],
+			generationConfig: {
+				temperature: 0.3,
+				maxOutputTokens: 900,
+				responseMimeType: "application/json",
+			},
+		}),
+	});
+	if (!res.ok) throw new Error(`gemini ${res.status}: ${await res.text()}`);
+	const json = (await res.json()) as {
+		candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+	};
+	const text = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+	const parsed = JSON.parse(extractJson(text));
+	return filterMoments(events, parsed);
+}
+
 export async function detectViralMoments(
 	events: GameEvent[],
 	snapshots: FeatureSnapshot[],
 ): Promise<ViralMoment[]> {
-	const groqKey = process.env.GROQ_API_KEY;
-	if (!groqKey) return mockDetectViralMoments(events, snapshots);
-
-	try {
-		const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${groqKey}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify({
-				model: "llama-3.3-70b-versatile",
-				temperature: 0.3,
-				max_tokens: 900,
-				response_format: { type: "json_object" },
-				messages: [
-					{ role: "system", content: SYSTEM_PROMPT },
-					{
-						role: "user",
-						content: JSON.stringify({ events, snapshots }),
-					},
-				],
-			}),
-		});
-		if (!res.ok) throw new Error(`groq ${res.status}: ${await res.text()}`);
-		const json = (await res.json()) as {
-			choices?: Array<{ message?: { content?: string } }>;
-		};
-		const content = json.choices?.[0]?.message?.content ?? "{}";
-		const parsed = JSON.parse(content) as { moments?: ViralMoment[] };
-		const kept = (parsed.moments ?? []).filter(
-			(m) =>
-				m &&
-				typeof m.eventIndex === "number" &&
-				m.eventIndex >= 0 &&
-				m.eventIndex < events.length &&
-				typeof m.score === "number" &&
-				m.score >= VIRAL_THRESHOLD &&
-				typeof m.label === "string" &&
-				typeof m.reason === "string",
-		);
-		return kept;
-	} catch (err) {
-		console.warn(
-			"[viral] groq detect failed, falling back to mock:",
-			err instanceof Error ? err.message : err,
-		);
-		return mockDetectViralMoments(events, snapshots);
+	if (process.env.GEMINI_API_KEY) {
+		try {
+			return await callGemini(events, snapshots);
+		} catch (err) {
+			console.warn(
+				"[viral] gemini failed, falling back to mock:",
+				err instanceof Error ? err.message : err,
+			);
+		}
 	}
+	return mockDetectViralMoments(events, snapshots);
 }

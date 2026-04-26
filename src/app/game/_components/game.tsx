@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { EditPlan } from "~/lib/ai-editor/types";
 import type { FeatureSnapshot, ViralMoment } from "~/lib/ai-editor/viral";
 import { createMusicEngine, type MusicEngine } from "./music";
+import { renderEdit } from "./renderEdit";
 import { createSfxEngine, type SfxEngine } from "./sfx";
 
 const ARENA_W = 960;
@@ -868,7 +869,12 @@ function updateBullets(s: GameRuntime, dt: number) {
 					);
 					const t = nowT(s);
 					if (b.team === "player") {
-						const chainSeconds = (t - s.lastPlayerKillMs) / 1000;
+						// Sentinel for "no prior kill" — Infinity would JSON-serialize
+						// to null and crash downstream consumers.
+						const chainSeconds =
+							s.lastPlayerKillMs < 0
+								? 9999
+								: (t - s.lastPlayerKillMs) / 1000;
 						s.events.push({
 							kind: "kill",
 							t,
@@ -1418,6 +1424,8 @@ export default function Game() {
 	const recorderRef = useRef<MediaRecorder | null>(null);
 	const chunksRef = useRef<Blob[]>([]);
 	const eventsRef = useRef<GameEvent[]>([]);
+	const snapshotsRef = useRef<FeatureSnapshot[]>([]);
+	const matchEndedAtRef = useRef<number>(0);
 	const [matchSummary, setMatchSummary] = useState<{
 		eventCount: number;
 		snapshotCount: number;
@@ -1431,6 +1439,11 @@ export default function Game() {
 		status: "idle" | "loading" | "done" | "error";
 		plan: EditPlan | null;
 	}>({ status: "idle", plan: null });
+	const [videoState, setVideoState] = useState<{
+		status: "idle" | "rendering" | "done" | "error";
+		progress: number;
+		blobUrl: string | null;
+	}>({ status: "idle", progress: 0, blobUrl: null });
 	const [hud, setHud] = useState({
 		hp: PLAYER_MAX_HP,
 		maxHp: PLAYER_MAX_HP,
@@ -1474,6 +1487,8 @@ export default function Game() {
 		const events = [...stateRef.current.events];
 		const snapshots = [...stateRef.current.snapshots];
 		eventsRef.current = events;
+		snapshotsRef.current = snapshots;
+		matchEndedAtRef.current = Date.now();
 		setMatchSummary({
 			eventCount: events.length,
 			snapshotCount: snapshots.length,
@@ -1683,11 +1698,44 @@ export default function Game() {
 		setMatchSummary({ eventCount: 0, snapshotCount: 0, blobUrl: null });
 		setViralState({ status: "idle", moments: [] });
 		setEditState({ status: "idle", plan: null });
+		setVideoState({ status: "idle", progress: 0, blobUrl: null });
 		startMatchRecording();
+	};
+
+	const downloadTelemetry = () => {
+		const payload = {
+			exportedAt: new Date().toISOString(),
+			matchEndedAt: matchEndedAtRef.current
+				? new Date(matchEndedAtRef.current).toISOString()
+				: null,
+			summary: {
+				wave: hud.wave,
+				kills: hud.kills,
+				eventCount: matchSummary.eventCount,
+				snapshotCount: matchSummary.snapshotCount,
+			},
+			events: eventsRef.current,
+			snapshots: snapshotsRef.current,
+			viralMoments: viralState.moments,
+			editPlan: editState.plan,
+		};
+		const blob = new Blob([JSON.stringify(payload, null, 2)], {
+			type: "application/json",
+		});
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `brrawl-session-${matchEndedAtRef.current || Date.now()}.json`;
+		document.body.appendChild(a);
+		a.click();
+		a.remove();
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
 	};
 
 	const requestEdit = async () => {
 		setEditState({ status: "loading", plan: null });
+		setVideoState({ status: "idle", progress: 0, blobUrl: null });
+		let plan: EditPlan;
 		try {
 			const res = await fetch("/api/edit-plan", {
 				method: "POST",
@@ -1695,11 +1743,33 @@ export default function Game() {
 				body: JSON.stringify({ events: eventsRef.current }),
 			});
 			if (!res.ok) throw new Error(`edit-plan ${res.status}`);
-			const plan: EditPlan = await res.json();
+			plan = (await res.json()) as EditPlan;
 			setEditState({ status: "done", plan });
 		} catch (err) {
 			console.error("[game] edit-plan failed", err);
 			setEditState({ status: "error", plan: null });
+			return;
+		}
+
+		const matchBlobUrl = matchSummary.blobUrl;
+		if (!matchBlobUrl) {
+			console.warn("[game] no match recording — skipping render");
+			return;
+		}
+
+		setVideoState({ status: "rendering", progress: 0, blobUrl: null });
+		try {
+			const { blobUrl } = await renderEdit({
+				matchBlobUrl,
+				events: eventsRef.current,
+				plan,
+				onProgress: (p) =>
+					setVideoState((s) => ({ ...s, status: "rendering", progress: p })),
+			});
+			setVideoState({ status: "done", progress: 1, blobUrl });
+		} catch (err) {
+			console.error("[game] render failed", err);
+			setVideoState({ status: "error", progress: 0, blobUrl: null });
 		}
 	};
 
@@ -1825,16 +1895,26 @@ export default function Game() {
 								editState={editState}
 								matchSummary={matchSummary}
 								onRequestEdit={requestEdit}
+								videoState={videoState}
 								viralState={viralState}
 							/>
 
-							<button
-								className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
-								onClick={startGame}
-								type="button"
-							>
-								REDEPLOY
-							</button>
+							<div className="flex w-full flex-wrap items-center justify-center gap-3 pt-2">
+								<button
+									className="rounded-xl bg-emerald-500 px-8 py-3 font-bold text-neutral-900 shadow-lg transition hover:bg-emerald-400 active:scale-95"
+									onClick={startGame}
+									type="button"
+								>
+									REDEPLOY
+								</button>
+								<button
+									className="rounded-xl border border-neutral-700 bg-neutral-900 px-5 py-3 font-mono text-[11px] text-neutral-200 uppercase tracking-wider transition hover:border-neutral-600 hover:bg-neutral-800"
+									onClick={downloadTelemetry}
+									type="button"
+								>
+									download telemetry .json
+								</button>
+							</div>
 						</div>
 					</Overlay>
 				)}
@@ -1872,11 +1952,17 @@ function ViralVerdict({
 	viralState,
 	matchSummary,
 	editState,
+	videoState,
 	onRequestEdit,
 }: {
 	viralState: { status: "idle" | "detecting" | "done"; moments: ViralMoment[] };
 	matchSummary: { eventCount: number; snapshotCount: number; blobUrl: string | null };
 	editState: { status: "idle" | "loading" | "done" | "error"; plan: EditPlan | null };
+	videoState: {
+		status: "idle" | "rendering" | "done" | "error";
+		progress: number;
+		blobUrl: string | null;
+	};
 	onRequestEdit: () => void;
 }) {
 	if (viralState.status === "detecting") {
@@ -1957,7 +2043,7 @@ function ViralVerdict({
 					)}
 					{editState.status === "loading" && (
 						<div className="rounded bg-neutral-900 px-3 py-2 text-center text-[10px] text-neutral-400 uppercase tracking-wider">
-							building edit plan…
+							asking model for plan…
 						</div>
 					)}
 					{editState.status === "error" && (
@@ -1965,16 +2051,63 @@ function ViralVerdict({
 							edit failed — see console
 						</div>
 					)}
+					{videoState.status === "rendering" && (
+						<div className="space-y-1.5 rounded bg-neutral-900 px-3 py-2">
+							<div className="flex items-center justify-between text-[10px] uppercase tracking-wider">
+								<span className="text-neutral-400">rendering edit…</span>
+								<span className="text-emerald-300">
+									{Math.round(videoState.progress * 100)}%
+								</span>
+							</div>
+							<div className="h-1 overflow-hidden rounded bg-neutral-800">
+								<div
+									className="h-full bg-amber-300 transition-[width] duration-200"
+									style={{ width: `${videoState.progress * 100}%` }}
+								/>
+							</div>
+						</div>
+					)}
+					{videoState.status === "error" && (
+						<div className="rounded bg-red-950/30 px-3 py-2 text-center text-[10px] text-red-300 uppercase tracking-wider">
+							render failed — see console
+						</div>
+					)}
 				</div>
 			</div>
 
-			{/* Recorded match preview / edit plan */}
+			{/* Right column: rendered edit > edit plan > raw recording */}
 			<div className="overflow-hidden rounded-lg border border-neutral-700 bg-neutral-950">
-				{editState.status === "done" && editState.plan ? (
+				{videoState.status === "done" && videoState.blobUrl ? (
+					<>
+						<div className="flex items-center justify-between border-neutral-800 border-b bg-neutral-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[.18em]">
+							<span className="text-amber-300">rendered edit</span>
+							<span className="text-neutral-500">9:16 · webm</span>
+						</div>
+						<div className="flex w-full justify-center bg-black">
+							<video
+								autoPlay
+								className="block max-h-[520px]"
+								controls
+								loop
+								playsInline
+								src={videoState.blobUrl}
+							/>
+						</div>
+						<a
+							className="block bg-amber-300 px-3 py-2 text-center font-bold text-[11px] text-neutral-900 uppercase tracking-wider transition hover:bg-amber-200"
+							download="brrawl-edit.webm"
+							href={videoState.blobUrl}
+						>
+							download edit .webm
+						</a>
+					</>
+				) : editState.status === "done" && editState.plan ? (
 					<>
 						<div className="flex items-center justify-between border-neutral-800 border-b bg-neutral-900 px-3 py-2 font-mono text-[10px] uppercase tracking-[.18em]">
 							<span className="text-emerald-300">edit plan</span>
-							<span className="text-neutral-500">ready</span>
+							<span className="text-neutral-500">
+								{videoState.status === "rendering" ? "rendering…" : "ready"}
+							</span>
 						</div>
 						<EditPlanCard plan={editState.plan} />
 					</>

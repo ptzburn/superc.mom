@@ -120,6 +120,50 @@ function validatePlan(raw: unknown, eventsLength: number): EditPlan {
 	return parsed;
 }
 
+async function callGemini(events: GameEvent[]): Promise<EditPlan> {
+	const apiKey = process.env.GEMINI_API_KEY;
+	if (!apiKey) throw new Error("no GEMINI_API_KEY");
+
+	const userPayload = {
+		events: events.map((e, i) => ({ index: i, ...e })),
+		eventCount: events.length,
+	};
+
+	const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+	const res = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+			contents: [
+				{
+					role: "user",
+					parts: [
+						{
+							text: `Here are the scored gameplay events. Return the edit plan JSON only.\n\n${JSON.stringify(userPayload)}`,
+						},
+					],
+				},
+			],
+			generationConfig: {
+				temperature: 0.7,
+				maxOutputTokens: 700,
+				responseMimeType: "application/json",
+			},
+		}),
+	});
+
+	if (!res.ok) throw new Error(`gemini ${res.status}: ${await res.text()}`);
+	const json = (await res.json()) as {
+		candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+	};
+	const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
+	if (!text) throw new Error("no text in Gemini response");
+
+	const parsed = JSON.parse(extractJson(text));
+	return validatePlan(parsed, events.length);
+}
+
 async function callGroq(events: GameEvent[]): Promise<EditPlan> {
 	const apiKey = process.env.GROQ_API_KEY;
 	if (!apiKey) throw new Error("no GROQ_API_KEY");
@@ -205,25 +249,15 @@ async function callAnthropic(events: GameEvent[]): Promise<EditPlan> {
 
 /**
  * Produce a TikTok edit plan for a list of scored gameplay events.
- *
- * Provider preference: GROQ_API_KEY > ANTHROPIC_API_KEY > deterministic mock.
- * Falls back to the mock on any network/validation failure.
+ * Gemini only — falls back to a deterministic mock on any failure.
  */
 export async function getEditPlan(events: GameEvent[]): Promise<EditPlan> {
-	if (process.env.GROQ_API_KEY) {
-		try { return await callGroq(events); }
-		catch (err) {
+	if (process.env.GEMINI_API_KEY) {
+		try {
+			return await callGemini(events);
+		} catch (err) {
 			console.warn(
-				"[ai-editor] groq failed, trying next provider:",
-				err instanceof Error ? err.message : err,
-			);
-		}
-	}
-	if (process.env.ANTHROPIC_API_KEY) {
-		try { return await callAnthropic(events); }
-		catch (err) {
-			console.warn(
-				"[ai-editor] anthropic failed, falling back to mock:",
+				"[ai-editor] gemini failed, falling back to mock:",
 				err instanceof Error ? err.message : err,
 			);
 		}
